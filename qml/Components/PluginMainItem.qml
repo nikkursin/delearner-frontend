@@ -1,7 +1,7 @@
 import Felgo
 import QtQuick
-import "helper"
-import "pages"
+import "../helper"
+import "../pages"
 
 Item {
     anchors.fill: parent

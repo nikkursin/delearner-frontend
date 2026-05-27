@@ -23,9 +23,9 @@ set(PRODUCT_STAGE "test")
 # Not used if using Felgo Developer App
 set(PRODUCT_LICENSE_KEY "")
 
-set(FELGO_PLUGINS
-    admob
-)
+# set(FELGO_PLUGINS
+#     admob
+# )
 
 # Find all QML/JS files for the QML compiler:
 file(GLOB_RECURSE QmlFiles RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} qml/*.qml qml/*.js)
@@ -33,6 +33,8 @@ file(GLOB_RECURSE QmlFiles RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} qml/*.qml qml/*.
 # Find all non-QML/JS files in the qml and assets folder to add as resources:
 file(GLOB_RECURSE AssetsFiles RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} assets/* qml/*)
 list(REMOVE_ITEM AssetsFiles ${QmlFiles})
+
+find_package(Qt6 REQUIRED COMPONENTS Core)
 
 qt_add_executable(delearner
     main.cpp
@@ -69,6 +71,7 @@ target_compile_definitions(delearner
     PRIVATE $<$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>:QT_QML_DEBUG>)
 
 target_link_libraries(delearner PRIVATE Felgo)
+target_link_libraries(delearner PRIVATE Qt6::Core)
 
 # uncomment this line to add Felgo Hot Reload and use hot reloading with your custom C++ code
 # for the remaining steps see here: https://felgo.com/custom-code-reload-app/

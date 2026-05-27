@@ -1,7 +1,8 @@
 import Felgo
 import QtQuick
-import "pages"
-import "helper"
+import "Pages"
+import "Helper"
+import "Components"
 
 /*/////////////////////////////////////
   NOTE:
@@ -24,6 +25,8 @@ App {
 
     // This item contains example code for the chosen Felgo Plugins
     // It is hidden by default and will overlay the QML items below if shown
+
+
     PluginMainItem {
         id: pluginMainItem
         z: 1           // display the plugin example above other items in the QML code below
@@ -34,6 +37,8 @@ App {
 
         AppPage {
             title: qsTr("Main Page")
+
+            navigationBarHidden: true
 
             Image {
                 source: "../assets/felgo-logo.png"
