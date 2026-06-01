@@ -38,6 +38,10 @@ find_package(Qt6 REQUIRED COMPONENTS Core)
 
 qt_add_executable(delearner
     main.cpp
+    Managers/DLAppStateManager.cpp
+    Managers/DLAppStateManager.h
+    Managers/DLDatabaseManager.cpp
+    Managers/DLDatabaseManager.h
     ${QmlFiles}
     ${AssetsFiles}
 )

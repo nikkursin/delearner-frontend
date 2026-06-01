@@ -3,6 +3,7 @@ import QtQuick
 import "Pages"
 import "Helper"
 import "Components"
+import "Views"
 
 /*/////////////////////////////////////
   NOTE:
@@ -27,24 +28,157 @@ App {
     // It is hidden by default and will overlay the QML items below if shown
 
 
-    PluginMainItem {
-        id: pluginMainItem
-        z: 1           // display the plugin example above other items in the QML code below
-        visible: false // set this to true to show the plugin example
-    }
+    // PluginMainItem {
+    //     id: pluginMainItem
+    //     z: 1           // display the plugin example above other items in the QML code below
+    //     visible: false // set this to true to show the plugin example
+    // }
 
-    NavigationStack {
+    // NavigationStack {
 
-        AppPage {
-            title: qsTr("Main Page")
+    //     AppPage {
+    //         title: qsTr("Main Page")
 
-            navigationBarHidden: true
+    //         navigationBarHidden: true
 
-            Image {
-                source: "../assets/felgo-logo.png"
-                anchors.centerIn: parent
-            }
-        }
+    //         Image {
+    //             source: "../assets/felgo-logo.png"
+    //             anchors.centerIn: parent
+    //         }
+    //     }
 
-    }
+    // }
+
+    id: app
+
+       Loader {
+           id: screenLoader
+           anchors.fill: parent
+
+           sourceComponent: {
+               switch (appStateManager.currentScreen) {
+               case 0:
+                   return startupLoadingPage
+               case 1:
+                   return wordsPage
+               case 2:
+                   return wordDetails
+               case 3:
+                   return addEditWordPage
+               case 4:
+                   return groupsPage
+               case 5:
+                   return groupEditPage
+               case 6:
+                   return quizHomePage
+               case 7:
+                   return quizSetupPage
+               case 8:
+                   return translationQuizSessionPage
+               case 9:
+                   return articleQuizSessionPage
+               case 10:
+                   return quizResults
+               case 11:
+                   return settingsPage
+               default:
+                   return startupLoadingPage
+               }
+           }
+       }
+
+       Component {
+           id: startupLoadingPage
+
+           DLStartupLoadingPage {
+           }
+       }
+
+       Component {
+           id: wordsPage
+
+           DLWordsPage {
+
+           }
+       }
+
+       Component {
+              id: wordDetails
+
+              DLWordDetails {
+
+              }
+       }
+
+       Component {
+              id: addEditWordPage
+
+              DLAddEditWordPage {
+
+              }
+       }
+
+       Component {
+              id: groupsPage
+
+              DLGroupsPage {
+
+              }
+       }
+
+       Component {
+              id: groupEditPage
+
+              DLGroupEditPage {
+
+              }
+       }
+
+       Component {
+              id: quizHomePage
+
+              DLQuizHomePage {
+
+              }
+       }
+
+       Component {
+              id: quizSetupPage
+
+              DLQuizSetupPage {
+
+              }
+       }
+
+       Component {
+              id: translationQuizSessionPage
+
+              DLTranslationQuizSessionPage {
+
+              }
+       }
+
+       Component {
+              id: articleQuizSessionPage
+
+              DLArticleQuizSessionPage {
+
+              }
+       }
+
+       Component {
+              id: quizResults
+
+              DLQuizResults {
+
+              }
+       }
+
+       Component {
+              id: settingsPage
+
+              DLSettingsPage {
+
+              }
+       }
 }
