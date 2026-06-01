@@ -3,7 +3,6 @@
 DLAppStateManager::DLAppStateManager(QObject *parent)
     : QObject{parent}
 {
-    m_databaseManager->init();
 }
 
 DLAppStateManager::~DLAppStateManager() {
@@ -11,7 +10,7 @@ DLAppStateManager::~DLAppStateManager() {
 }
 
 void DLAppStateManager::init(const QString& databasePath) {
-    m_databaseManager->openDatabase(databasePath);
+    DLDatabaseManager::instance().openDatabase(databasePath);
 }
 
 DLAppStateManager::DLScreen DLAppStateManager::currentScreen() const {
