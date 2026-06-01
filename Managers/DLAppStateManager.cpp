@@ -1,8 +1,12 @@
 #include "DLAppStateManager.h"
 
+#include <QThread>
 DLAppStateManager::DLAppStateManager(QObject *parent)
     : QObject{parent}
 {
+    navigateTo(StartupLoadingPage);
+    QThread::msleep(2000);
+    navigateTo(AddEditWordPage);
 }
 
 DLAppStateManager::~DLAppStateManager() {
@@ -63,4 +67,13 @@ Q_INVOKABLE void DLAppStateManager::goQuizResults() {
 
 Q_INVOKABLE void DLAppStateManager::goSettingsPage() {
 
+}
+
+void DLAppStateManager::navigateTo(const DLScreen &screen)
+{
+    if (m_currentScreen == screen)
+        return;
+
+    m_currentScreen = screen;
+    emit currentScreenChanged();
 }

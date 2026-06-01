@@ -10,6 +10,7 @@
 #include <QMutex>
 #include <QList>
 
+
 struct DLSqlCommand
 {
     QString sql;
