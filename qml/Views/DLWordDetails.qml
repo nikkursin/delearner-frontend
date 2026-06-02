@@ -1,7 +1,7 @@
 import QtQuick
 import Felgo
 
-AppPage {
+DLAppPage {
 
     title: "New Page"
 

@@ -2,6 +2,9 @@
 #define DLAPPSTATEMANAGER_H
 
 #include <QObject>
+#include <QString>
+#include <QVariantList>
+#include <QVariantMap>
 
 #include "DLDatabaseManager.h"
 
@@ -10,6 +13,7 @@ class DLAppStateManager : public QObject
     Q_OBJECT
 
     Q_PROPERTY(DLScreen currentScreen READ currentScreen NOTIFY currentScreenChanged)
+    Q_PROPERTY(QString lastError READ lastError NOTIFY lastErrorChanged)
 public:
     enum DLScreen
     {
@@ -35,6 +39,7 @@ public:
     void init(const QString& databasePath);
 
     DLScreen currentScreen() const;
+    QString lastError() const;
 
     Q_INVOKABLE void goStartupLoadingPage();
     Q_INVOKABLE void goWordsPage();
@@ -49,15 +54,25 @@ public:
     Q_INVOKABLE void goQuizResults();
     Q_INVOKABLE void goSettingsPage();
 
+    Q_INVOKABLE QVariantList availableGroups();
+    Q_INVOKABLE QVariantMap wordById(int id);
+    Q_INVOKABLE int createWord(const QVariantMap& wordData);
+    Q_INVOKABLE bool updateWord(int id, const QVariantMap& wordData);
+
 signals:
 
     void currentScreenChanged();
+    void lastErrorChanged();
+    void wordsChanged();
 
 private:
     void navigateTo(const DLScreen& screen);
+    void setLastError(const QString& error);
+    int groupIdFromWordData(const QVariantMap& wordData) const;
+    QString trimmedStringValue(const QVariantMap& wordData, const QString& key) const;
 
-    DLDatabaseManager* m_databaseManager;
     DLScreen m_currentScreen = StartupLoadingPage;
+    QString m_lastError;
 
 };
 

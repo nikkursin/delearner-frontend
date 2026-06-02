@@ -41,27 +41,29 @@ QVariant DLDatabaseManager::nullVariant() const
 
 bool DLDatabaseManager::openDatabase(const QString& databasePath)
 {
-    QMutexLocker locker(&m_mutex);
+    {
+        QMutexLocker locker(&m_mutex);
 
-    if (QSqlDatabase::contains(m_connectionName)) {
-        m_db = QSqlDatabase::database(m_connectionName);
+        if (QSqlDatabase::contains(m_connectionName)) {
+            m_db = QSqlDatabase::database(m_connectionName);
 
-        if (m_db.isOpen()) {
-            return true;
+            if (m_db.isOpen()) {
+                return true;
+            }
+        } else {
+            m_db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), m_connectionName);
         }
-    } else {
-        m_db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), m_connectionName);
-    }
 
-    m_db.setDatabaseName(databasePath);
+        m_db.setDatabaseName(databasePath);
 
-    if (!m_db.open()) {
-        m_lastError = m_db.lastError().text();
-        return false;
-    }
+        if (!m_db.open()) {
+            m_lastError = m_db.lastError().text();
+            return false;
+        }
 
-    if (!executeSqlNoLock(QStringLiteral("PRAGMA foreign_keys = ON;"))) {
-        return false;
+        if (!executeSqlNoLock(QStringLiteral("PRAGMA foreign_keys = ON;"))) {
+            return false;
+        }
     }
 
     if (!createTablesIfNeeded()) {

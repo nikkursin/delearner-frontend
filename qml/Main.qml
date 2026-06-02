@@ -36,7 +36,7 @@ App {
 
     // NavigationStack {
 
-    //     AppPage {
+    //     DLAppPage {
     //         title: qsTr("Main Page")
 
     //         navigationBarHidden: true
