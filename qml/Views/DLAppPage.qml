@@ -105,23 +105,27 @@ Page {
                     ]
 
                     delegate: Item {
+                        id: tabDelegate
+
+                        required property var modelData
+
                         Layout.fillWidth: true
                         Layout.fillHeight: true
 
-                        readonly property bool selected: root.activeTab === modelData.key
+                        readonly property bool selected: root.activeTab === tabDelegate.modelData.key
 
                         Rectangle {
                             anchors.centerIn: parent
                             width: Math.min(parent.width - 4, 64)
                             height: 48
                             radius: 16
-                            color: selected ? Qt.rgba(51 / 255, 127 / 255, 230 / 255, 0.12) : "transparent"
+                            color: tabDelegate.selected ? Qt.rgba(51 / 255, 127 / 255, 230 / 255, 0.12) : "transparent"
                         }
 
                         Text {
                             anchors.centerIn: parent
-                            text: modelData.label
-                            color: selected ? root.blue : root.textMuted
+                            text: tabDelegate.modelData.label
+                            color: tabDelegate.selected ? root.blue : root.textMuted
                             font.pixelSize: 12
                             font.weight: Font.Bold
                             horizontalAlignment: Text.AlignHCenter
@@ -132,15 +136,15 @@ Page {
                         MouseArea {
                             anchors.fill: parent
                             onClicked: {
-                                if (modelData.key === "words") {
+                                if (tabDelegate.modelData.key === "words") {
                                     appStateManager.goWordsPage()
-                                } else if (modelData.key === "groups") {
+                                } else if (tabDelegate.modelData.key === "groups") {
                                     appStateManager.goGroupsPage()
-                                } else if (modelData.key === "add") {
+                                } else if (tabDelegate.modelData.key === "add") {
                                     appStateManager.goAddEditWordPage()
-                                } else if (modelData.key === "quiz") {
+                                } else if (tabDelegate.modelData.key === "quiz") {
                                     appStateManager.goQuizHomePage()
-                                } else if (modelData.key === "settings") {
+                                } else if (tabDelegate.modelData.key === "settings") {
                                     appStateManager.goSettingsPage()
                                 }
                             }

@@ -40,16 +40,6 @@ int main(int argc, char *argv[])
 
     engine.load(QUrl(felgo.mainQmlFileName()));
 
-    // if (engine.rootObjects().isEmpty()) {
-    //     return -1;
-    // }
-
-    // DLAppStateManager* appStateManagerPtr = appStateManager.data();
-    // QTimer::singleShot(0, appStateManagerPtr, [appStateManagerPtr, dbPath]() {
-    //     QDir().mkpath(QFileInfo(dbPath).absolutePath());
-    //     appStateManagerPtr->init(dbPath);
-    // });
-
     appStateManager->init(dbPath);
 
     return app.exec();

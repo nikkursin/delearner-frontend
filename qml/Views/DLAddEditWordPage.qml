@@ -130,6 +130,7 @@ DLAppPage {
     }
 
     function saveWord() {
+        console.log("Trying to save word...")
         if (!validateForm()) {
             return
         }
@@ -275,9 +276,13 @@ DLAppPage {
                     model: root.partOfSpeechOptions
 
                     ChipButton {
-                        text: modelData
-                        selected: root.selectedPartOfSpeech === modelData
-                        onClicked: root.selectedPartOfSpeech = modelData
+                        id: partOfSpeechDelegate
+
+                        required property var modelData
+
+                        text: partOfSpeechDelegate.modelData
+                        selected: root.selectedPartOfSpeech === partOfSpeechDelegate.modelData
+                        onClicked: root.selectedPartOfSpeech = partOfSpeechDelegate.modelData
                     }
                 }
             }
@@ -294,10 +299,14 @@ DLAppPage {
                     model: root.articleOptions
 
                     ChipButton {
+                        id: articleDelegate
+
+                        required property var modelData
+
                         Layout.fillWidth: true
-                        text: modelData.label
-                        selected: root.selectedArticle === modelData.value
-                        onClicked: root.selectedArticle = modelData.value
+                        text: articleDelegate.modelData.label
+                        selected: root.selectedArticle === articleDelegate.modelData.value
+                        onClicked: root.selectedArticle = articleDelegate.modelData.value
                     }
                 }
             }
@@ -322,6 +331,7 @@ DLAppPage {
                     font: groupCombo.font
                     elide: Text.ElideRight
                 }
+
                 onActivated: function(index) {
                     root.selectedGroupId = root.groupOptions[index].id
                 }
