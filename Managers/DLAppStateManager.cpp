@@ -1,5 +1,7 @@
 #include "DLAppStateManager.h"
 
+#include <algorithm>
+
 DLAppStateManager::DLAppStateManager(QObject *parent)
     : QObject{parent}
 {
@@ -26,6 +28,11 @@ DLAppStateManager::DLScreen DLAppStateManager::currentScreen() const {
 QString DLAppStateManager::lastError() const
 {
     return m_lastError;
+}
+
+int DLAppStateManager::selectedWordId() const
+{
+    return m_selectedWordId;
 }
 
 void DLAppStateManager::goStartupLoadingPage() {
@@ -81,6 +88,32 @@ QVariantList DLAppStateManager::availableGroups()
     const QVariantList groups = DLDatabaseManager::instance().fetchAllGroups();
     setLastError(QString());
     return groups;
+}
+
+QVariantList DLAppStateManager::loadWords(const QString& sortMode, int groupId)
+{
+    const QVariantList words = DLDatabaseManager::instance().fetchAllWords(sortMode, groupId);
+    setLastError(QString());
+    return words;
+}
+
+QVariantList DLAppStateManager::searchWords(const QString& query, const QString& sortMode, int groupId)
+{
+    const QString trimmedQuery = query.trimmed();
+    if (trimmedQuery.isEmpty()) {
+        return loadWords(sortMode, groupId);
+    }
+
+    const QVariantList words = DLDatabaseManager::instance().searchWords(trimmedQuery, groupId);
+    setLastError(QString());
+    return sortedWords(words, sortMode);
+}
+
+int DLAppStateManager::wordCount(int groupId)
+{
+    const int count = DLDatabaseManager::instance().getWordCount(groupId);
+    setLastError(QString());
+    return count;
 }
 
 QVariantMap DLAppStateManager::wordById(int id)
@@ -150,6 +183,52 @@ bool DLAppStateManager::updateWord(int id, const QVariantMap& wordData)
     return true;
 }
 
+bool DLAppStateManager::deleteWord(int id)
+{
+    if (id <= 0) {
+        setLastError(QStringLiteral("Invalid word id."));
+        return false;
+    }
+
+    const bool success = DLDatabaseManager::instance().deleteWord(id);
+    if (!success) {
+        setLastError(DLDatabaseManager::instance().lastError());
+        return false;
+    }
+
+    if (m_selectedWordId == id) {
+        setSelectedWordId(-1);
+    }
+
+    setLastError(QString());
+    emit wordsChanged();
+    return true;
+}
+
+void DLAppStateManager::openWordDetails(int id)
+{
+    if (id <= 0) {
+        setLastError(QStringLiteral("Invalid word id."));
+        return;
+    }
+
+    setSelectedWordId(id);
+    setLastError(QString());
+    navigateTo(WordDetails);
+}
+
+void DLAppStateManager::openEditWord(int id)
+{
+    if (id <= 0) {
+        setLastError(QStringLiteral("Invalid word id."));
+        return;
+    }
+
+    setSelectedWordId(id);
+    setLastError(QString());
+    navigateTo(AddEditWordPage);
+}
+
 void DLAppStateManager::navigateTo(const DLScreen &screen)
 {
     if (m_currentScreen == screen)
@@ -166,6 +245,45 @@ void DLAppStateManager::setLastError(const QString& error)
 
     m_lastError = error;
     emit lastErrorChanged();
+}
+
+void DLAppStateManager::setSelectedWordId(int id)
+{
+    if (m_selectedWordId == id)
+        return;
+
+    m_selectedWordId = id;
+    emit selectedWordIdChanged();
+}
+
+QVariantList DLAppStateManager::sortedWords(const QVariantList& words, const QString& sortMode) const
+{
+    QVariantList sorted = words;
+
+    std::sort(sorted.begin(), sorted.end(), [sortMode](const QVariant& left, const QVariant& right) {
+        const QVariantMap leftWord = left.toMap();
+        const QVariantMap rightWord = right.toMap();
+
+        if (sortMode == QStringLiteral("oldest")) {
+            return leftWord.value(QStringLiteral("created_at")).toDouble() < rightWord.value(QStringLiteral("created_at")).toDouble();
+        }
+
+        if (sortMode == QStringLiteral("az")) {
+            return QString::localeAwareCompare(
+                       leftWord.value(QStringLiteral("german_word")).toString(),
+                       rightWord.value(QStringLiteral("german_word")).toString()) < 0;
+        }
+
+        if (sortMode == QStringLiteral("za")) {
+            return QString::localeAwareCompare(
+                       leftWord.value(QStringLiteral("german_word")).toString(),
+                       rightWord.value(QStringLiteral("german_word")).toString()) > 0;
+        }
+
+        return leftWord.value(QStringLiteral("created_at")).toDouble() > rightWord.value(QStringLiteral("created_at")).toDouble();
+    });
+
+    return sorted;
 }
 
 int DLAppStateManager::groupIdFromWordData(const QVariantMap& wordData) const

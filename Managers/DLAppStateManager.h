@@ -14,6 +14,7 @@ class DLAppStateManager : public QObject
 
     Q_PROPERTY(DLScreen currentScreen READ currentScreen NOTIFY currentScreenChanged)
     Q_PROPERTY(QString lastError READ lastError NOTIFY lastErrorChanged)
+    Q_PROPERTY(int selectedWordId READ selectedWordId NOTIFY selectedWordIdChanged)
 public:
     enum DLScreen
     {
@@ -40,6 +41,7 @@ public:
 
     DLScreen currentScreen() const;
     QString lastError() const;
+    int selectedWordId() const;
 
     Q_INVOKABLE void goStartupLoadingPage();
     Q_INVOKABLE void goWordsPage();
@@ -55,24 +57,34 @@ public:
     Q_INVOKABLE void goSettingsPage();
 
     Q_INVOKABLE QVariantList availableGroups();
+    Q_INVOKABLE QVariantList loadWords(const QString& sortMode = QStringLiteral("newest"), int groupId = -1);
+    Q_INVOKABLE QVariantList searchWords(const QString& query, const QString& sortMode = QStringLiteral("newest"), int groupId = -1);
+    Q_INVOKABLE int wordCount(int groupId = -1);
     Q_INVOKABLE QVariantMap wordById(int id);
     Q_INVOKABLE int createWord(const QVariantMap& wordData);
     Q_INVOKABLE bool updateWord(int id, const QVariantMap& wordData);
+    Q_INVOKABLE bool deleteWord(int id);
+    Q_INVOKABLE void openWordDetails(int id);
+    Q_INVOKABLE void openEditWord(int id);
 
 signals:
 
     void currentScreenChanged();
     void lastErrorChanged();
+    void selectedWordIdChanged();
     void wordsChanged();
 
 private:
     void navigateTo(const DLScreen& screen);
     void setLastError(const QString& error);
+    void setSelectedWordId(int id);
+    QVariantList sortedWords(const QVariantList& words, const QString& sortMode) const;
     int groupIdFromWordData(const QVariantMap& wordData) const;
     QString trimmedStringValue(const QVariantMap& wordData, const QString& key) const;
 
     DLScreen m_currentScreen = StartupLoadingPage;
     QString m_lastError;
+    int m_selectedWordId = -1;
 
 };
 
