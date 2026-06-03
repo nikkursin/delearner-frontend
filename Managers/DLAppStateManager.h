@@ -57,6 +57,9 @@ public:
     Q_INVOKABLE void goSettingsPage();
 
     Q_INVOKABLE QVariantList availableGroups();
+    Q_INVOKABLE int createGroup(const QString& name, const QString& colorHex = QStringLiteral("#337fe6"));
+    Q_INVOKABLE bool updateGroup(int id, const QString& name, const QString& colorHex = QStringLiteral("#337fe6"));
+    Q_INVOKABLE bool deleteGroup(int id);
     Q_INVOKABLE QVariantList loadWords(const QString& sortMode = QStringLiteral("newest"), int groupId = -1);
     Q_INVOKABLE QVariantList searchWords(const QString& query, const QString& sortMode = QStringLiteral("newest"), int groupId = -1);
     Q_INVOKABLE int wordCount(int groupId = -1);
@@ -80,6 +83,7 @@ signals:
     void lastErrorChanged();
     void selectedWordIdChanged();
     void wordsChanged();
+    void groupsChanged();
 
 private:
     void navigateTo(const DLScreen& screen);

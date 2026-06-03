@@ -96,6 +96,78 @@ QVariantList DLAppStateManager::availableGroups()
     return groups;
 }
 
+int DLAppStateManager::createGroup(const QString& name, const QString& colorHex)
+{
+    const QString trimmedName = name.trimmed();
+    if (trimmedName.isEmpty()) {
+        setLastError(QStringLiteral("Group name is required."));
+        return -1;
+    }
+
+    const QString trimmedColor = colorHex.trimmed().isEmpty()
+        ? QStringLiteral("#337fe6")
+        : colorHex.trimmed();
+
+    const int newId = DLDatabaseManager::instance().insertGroup(trimmedName, trimmedColor);
+    if (newId < 0) {
+        setLastError(DLDatabaseManager::instance().lastError());
+        return -1;
+    }
+
+    setLastError(QString());
+    emit groupsChanged();
+    emit wordsChanged();
+    return newId;
+}
+
+bool DLAppStateManager::updateGroup(int id, const QString& name, const QString& colorHex)
+{
+    if (id <= 0) {
+        setLastError(QStringLiteral("Invalid group id."));
+        return false;
+    }
+
+    const QString trimmedName = name.trimmed();
+    if (trimmedName.isEmpty()) {
+        setLastError(QStringLiteral("Group name is required."));
+        return false;
+    }
+
+    const QString trimmedColor = colorHex.trimmed().isEmpty()
+        ? QStringLiteral("#337fe6")
+        : colorHex.trimmed();
+
+    const bool success = DLDatabaseManager::instance().updateGroup(id, trimmedName, trimmedColor);
+    if (!success) {
+        setLastError(DLDatabaseManager::instance().lastError());
+        return false;
+    }
+
+    setLastError(QString());
+    emit groupsChanged();
+    emit wordsChanged();
+    return true;
+}
+
+bool DLAppStateManager::deleteGroup(int id)
+{
+    if (id <= 0) {
+        setLastError(QStringLiteral("Invalid group id."));
+        return false;
+    }
+
+    const bool success = DLDatabaseManager::instance().deleteGroup(id);
+    if (!success) {
+        setLastError(DLDatabaseManager::instance().lastError());
+        return false;
+    }
+
+    setLastError(QString());
+    emit groupsChanged();
+    emit wordsChanged();
+    return true;
+}
+
 QVariantList DLAppStateManager::loadWords(const QString& sortMode, int groupId)
 {
     const QVariantList words = DLDatabaseManager::instance().fetchAllWords(sortMode, groupId);
