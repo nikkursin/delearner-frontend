@@ -4,6 +4,7 @@
 #include <QSqlError>
 #include <QSqlRecord>
 #include <QDateTime>
+#include <QDir>
 #include <QFileInfo>
 #include <QMutexLocker>
 
@@ -711,4 +712,118 @@ QVariantMap DLDatabaseManager::getDatabaseStats()
     stats[QStringLiteral("db_size_bytes")] = fileInfo.exists() ? fileInfo.size() : -1;
 
     return stats;
+}
+
+bool DLDatabaseManager::importDatabaseMerge(const QString& sourceDatabasePath)
+{
+    QMutexLocker locker(&m_mutex);
+
+    const QFileInfo sourceInfo(sourceDatabasePath);
+    if (!sourceInfo.exists() || !sourceInfo.isFile()) {
+        m_lastError = QStringLiteral("Import file not found.");
+        return false;
+    }
+
+    if (QDir::cleanPath(sourceInfo.absoluteFilePath()) == QDir::cleanPath(m_db.databaseName())) {
+        m_lastError = QStringLiteral("Choose a different database file to merge.");
+        return false;
+    }
+
+    QSqlQuery query(m_db);
+    query.prepare(QStringLiteral("ATTACH DATABASE :path AS importdb;"));
+    query.bindValue(QStringLiteral(":path"), sourceInfo.absoluteFilePath());
+
+    if (!query.exec()) {
+        m_lastError = query.lastError().text();
+        return false;
+    }
+
+    auto detachImportDatabase = [this]() {
+        QSqlQuery detachQuery(m_db);
+        if (!detachQuery.exec(QStringLiteral("DETACH DATABASE importdb;"))) {
+            m_lastError = detachQuery.lastError().text();
+            return false;
+        }
+
+        return true;
+    };
+
+    if (!m_db.transaction()) {
+        m_lastError = m_db.lastError().text();
+        detachImportDatabase();
+        return false;
+    }
+
+    QList<DLSqlCommand> commands = {
+        {
+            QStringLiteral(R"(
+                INSERT OR IGNORE INTO groups (name, color_hex, created_at)
+                SELECT name, color_hex, created_at
+                FROM importdb.groups;
+            )"),
+            {}
+        },
+        {
+            QStringLiteral(R"(
+                INSERT OR IGNORE INTO words
+                    (german_word, article, part_of_speech, native_translation,
+                     example_phrase_de, example_phrase_native, group_id,
+                     created_at, last_reviewed_at, correct_answers, wrong_answers)
+                SELECT iw.german_word,
+                       iw.article,
+                       iw.part_of_speech,
+                       iw.native_translation,
+                       iw.example_phrase_de,
+                       iw.example_phrase_native,
+                       (
+                           SELECT g.id
+                           FROM groups g
+                           JOIN importdb.groups ig ON ig.name = g.name
+                           WHERE ig.id = iw.group_id
+                           LIMIT 1
+                       ),
+                       iw.created_at,
+                       iw.last_reviewed_at,
+                       iw.correct_answers,
+                       iw.wrong_answers
+                FROM importdb.words iw;
+            )"),
+            {}
+        }
+    };
+
+    if (!executeSqlBatchNoLock(commands)) {
+        m_db.rollback();
+        detachImportDatabase();
+        return false;
+    }
+
+    if (!m_db.commit()) {
+        m_lastError = m_db.lastError().text();
+        m_db.rollback();
+        detachImportDatabase();
+        return false;
+    }
+
+    return detachImportDatabase();
+}
+
+bool DLDatabaseManager::deleteAllData()
+{
+    const QList<DLSqlCommand> commands = {
+        {
+            QStringLiteral("DELETE FROM words;"),
+            {}
+        },
+        {
+            QStringLiteral("DELETE FROM groups;"),
+            {}
+        },
+        {
+            QStringLiteral("DELETE FROM sqlite_sequence WHERE name IN ('words', 'groups');"),
+            {}
+        }
+    };
+
+    return executeSqlBatch(commands);
 }

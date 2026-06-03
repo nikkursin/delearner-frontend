@@ -170,28 +170,6 @@ DLAppPage {
         return totalWordCount + " saved " + noun
     }
 
-    function requestDelete(word) {
-        pendingDeleteWordId = word.id
-        pendingDeleteWord = word.german_word || "this word"
-        deletePopup.open()
-    }
-
-    function confirmDelete() {
-        if (pendingDeleteWordId <= 0) {
-            deletePopup.close()
-            return
-        }
-
-        if (!appStateManager.deleteWord(pendingDeleteWordId)) {
-            errorMessage = appStateManager.lastError || "Unable to delete this word."
-        }
-
-        pendingDeleteWordId = -1
-        pendingDeleteWord = ""
-        deletePopup.close()
-        reloadAll()
-    }
-
     Item {
         Layout.fillWidth: true
         Layout.preferredHeight: 90
@@ -263,32 +241,6 @@ DLAppPage {
                     font.pixelSize: sortCombo.font.pixelSize
                     font.weight: Font.Bold
                     elide: Text.ElideRight
-                }
-            }
-
-            Button {
-                id: addButton
-
-                Layout.preferredWidth: 40
-                Layout.preferredHeight: 40
-                text: "+"
-                font.pixelSize: 24
-                font.weight: Font.ExtraBold
-                onClicked: appStateManager.goAddEditWordPage()
-
-                contentItem: Text {
-                    text: addButton.text
-                    color: root.blue
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-                    font: addButton.font
-                }
-
-                background: Rectangle {
-                    radius: 14
-                    color: root.cardBg
-                    border.color: root.line
-                    border.width: 1
                 }
             }
         }
@@ -461,107 +413,6 @@ DLAppPage {
         }
     }
 
-    Popup {
-        id: deletePopup
-
-        parent: Overlay.overlay
-        modal: true
-        focus: true
-        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-        width: Math.min(root.width - 36, 330)
-        x: Math.round((parent.width - width) / 2)
-        y: Math.round((parent.height - height) / 2)
-        padding: 0
-
-        background: Rectangle {
-            radius: 18
-            color: root.cardBg
-            border.color: root.line
-            border.width: 1
-        }
-
-        contentItem: ColumnLayout {
-            spacing: 16
-
-            Text {
-                Layout.fillWidth: true
-                Layout.topMargin: 20
-                Layout.leftMargin: 18
-                Layout.rightMargin: 18
-                text: "Delete word?"
-                color: root.textMain
-                font.pixelSize: 20
-                font.weight: Font.ExtraBold
-                horizontalAlignment: Text.AlignHCenter
-            }
-
-            Text {
-                Layout.fillWidth: true
-                Layout.leftMargin: 18
-                Layout.rightMargin: 18
-                text: "This will remove \"" + root.pendingDeleteWord + "\" from your saved vocabulary."
-                color: root.textMuted
-                font.pixelSize: 14
-                wrapMode: Text.WordWrap
-                horizontalAlignment: Text.AlignHCenter
-            }
-
-            RowLayout {
-                Layout.fillWidth: true
-                Layout.leftMargin: 18
-                Layout.rightMargin: 18
-                Layout.bottomMargin: 18
-                spacing: 10
-
-                Button {
-                    id: cancelDeleteButton
-
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 46
-                    text: "Cancel"
-                    onClicked: deletePopup.close()
-
-                    contentItem: Text {
-                        text: cancelDeleteButton.text
-                        color: root.textMain
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                        font.pixelSize: 15
-                        font.weight: Font.Bold
-                    }
-
-                    background: Rectangle {
-                        radius: 15
-                        color: root.fieldBg
-                    }
-                }
-
-                Button {
-                    id: confirmDeleteButton
-
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 46
-                    text: "Delete"
-                    onClicked: root.confirmDelete()
-
-                    contentItem: Text {
-                        text: confirmDeleteButton.text
-                        color: root.red
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                        font.pixelSize: 15
-                        font.weight: Font.Bold
-                    }
-
-                    background: Rectangle {
-                        radius: 15
-                        color: root.redSoft
-                    }
-                }
-            }
-        }
-    }
-
     component WordCard: Rectangle {
         id: card
 
@@ -646,29 +497,6 @@ DLAppPage {
                 MetaPill {
                     visible: root.groupNameFor(card.word.group_id).length > 0
                     text: root.groupNameFor(card.word.group_id)
-                }
-
-                Button {
-                    id: deleteWordButton
-
-                    width: 58
-                    height: 28
-                    text: "Delete"
-                    onClicked: root.requestDelete(card.word)
-
-                    contentItem: Text {
-                        text: deleteWordButton.text
-                        color: root.red
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                        font.pixelSize: 12
-                        font.weight: Font.Bold
-                    }
-
-                    background: Rectangle {
-                        radius: 14
-                        color: root.redSoft
-                    }
                 }
             }
         }

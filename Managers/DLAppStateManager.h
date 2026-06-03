@@ -60,10 +60,17 @@ public:
     Q_INVOKABLE QVariantList loadWords(const QString& sortMode = QStringLiteral("newest"), int groupId = -1);
     Q_INVOKABLE QVariantList searchWords(const QString& query, const QString& sortMode = QStringLiteral("newest"), int groupId = -1);
     Q_INVOKABLE int wordCount(int groupId = -1);
+    Q_INVOKABLE int groupCount();
+    Q_INVOKABLE qint64 databaseSize();
+    Q_INVOKABLE QVariantMap databaseStats();
     Q_INVOKABLE QVariantMap wordById(int id);
     Q_INVOKABLE int createWord(const QVariantMap& wordData);
     Q_INVOKABLE bool updateWord(int id, const QVariantMap& wordData);
     Q_INVOKABLE bool deleteWord(int id);
+    Q_INVOKABLE bool exportDatabase(const QString& targetPath);
+    Q_INVOKABLE bool importDatabaseReplace(const QString& sourcePath);
+    Q_INVOKABLE bool importDatabaseMerge(const QString& sourcePath);
+    Q_INVOKABLE bool deleteAllData();
     Q_INVOKABLE void openWordDetails(int id);
     Q_INVOKABLE void openEditWord(int id);
 
@@ -81,9 +88,11 @@ private:
     QVariantList sortedWords(const QVariantList& words, const QString& sortMode) const;
     int groupIdFromWordData(const QVariantMap& wordData) const;
     QString trimmedStringValue(const QVariantMap& wordData, const QString& key) const;
+    QString localPathFromUrlOrPath(const QString& value) const;
 
     DLScreen m_currentScreen = StartupLoadingPage;
     QString m_lastError;
+    QString m_databasePath;
     int m_selectedWordId = -1;
 
 };

@@ -95,6 +95,8 @@ public:
     bool incrementWrongAnswer(int wordId);
 
     QVariantMap getDatabaseStats();
+    bool importDatabaseMerge(const QString& sourceDatabasePath);
+    bool deleteAllData();
 
 private:
     bool executeSql(const QString& sql,
