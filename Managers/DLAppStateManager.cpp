@@ -4,6 +4,8 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QRandomGenerator>
+#include <QSet>
 #include <QUrl>
 
 DLAppStateManager::DLAppStateManager(QObject *parent)
@@ -69,7 +71,12 @@ void DLAppStateManager::goQuizHomePage() {
     navigateTo(QuizHomePage);
 }
 
-void DLAppStateManager::goQuizSetupPage() {
+void DLAppStateManager::goQuizSetupPage(const QString& quizType) {
+    const QuizType parsedType = quizTypeFromString(quizType);
+    if (parsedType != UnknownQuiz) {
+        m_selectedQuizType = parsedType;
+        emit quizStateChanged();
+    }
     navigateTo(QuizSetupPage);
 }
 
@@ -435,6 +442,271 @@ void DLAppStateManager::openEditWord(int id)
     navigateTo(AddEditWordPage);
 }
 
+QVariantList DLAppStateManager::availableQuizModes()
+{
+    QVariantList modes;
+
+    const int translationCount = availableQuestionCount(TranslationQuiz, -1);
+    QVariantMap translationMode;
+    translationMode.insert(QStringLiteral("type"), quizTypeToString(TranslationQuiz));
+    translationMode.insert(QStringLiteral("title"), quizTypeTitle(TranslationQuiz));
+    translationMode.insert(QStringLiteral("description"), QStringLiteral("Pick the native translation for each German word."));
+    translationMode.insert(QStringLiteral("availableCount"), translationCount);
+    translationMode.insert(QStringLiteral("minimumCount"), 2);
+    translationMode.insert(QStringLiteral("available"), translationCount >= 2);
+    translationMode.insert(QStringLiteral("unavailableReason"), translationCount >= 2 ? QString() : QStringLiteral("Add at least 2 words with translations to start."));
+    modes.append(translationMode);
+
+    const int articleCount = availableQuestionCount(ArticleQuiz, -1);
+    QVariantMap articleMode;
+    articleMode.insert(QStringLiteral("type"), quizTypeToString(ArticleQuiz));
+    articleMode.insert(QStringLiteral("title"), quizTypeTitle(ArticleQuiz));
+    articleMode.insert(QStringLiteral("description"), QStringLiteral("Choose der, die, or das for saved German nouns."));
+    articleMode.insert(QStringLiteral("availableCount"), articleCount);
+    articleMode.insert(QStringLiteral("minimumCount"), 1);
+    articleMode.insert(QStringLiteral("available"), articleCount >= 1);
+    articleMode.insert(QStringLiteral("unavailableReason"), articleCount >= 1 ? QString() : QStringLiteral("Add at least 1 noun with an article to start."));
+    modes.append(articleMode);
+
+    setLastError(QString());
+    return modes;
+}
+
+QString DLAppStateManager::selectedQuizType() const
+{
+    return quizTypeToString(m_selectedQuizType);
+}
+
+int DLAppStateManager::availableQuizQuestionCount(const QString& type, int groupId)
+{
+    const QuizType quizType = quizTypeFromString(type);
+    const int count = availableQuestionCount(quizType, groupId);
+    if (quizType == UnknownQuiz) {
+        setLastError(QStringLiteral("Choose a quiz type."));
+    } else {
+        setLastError(QString());
+    }
+    return count;
+}
+
+bool DLAppStateManager::canStartQuiz(const QString& type, int groupId, int questionCount)
+{
+    const QuizType quizType = quizTypeFromString(type);
+    if (quizType == UnknownQuiz) {
+        setLastError(QStringLiteral("Choose a quiz type."));
+        return false;
+    }
+
+    if (questionCount <= 0) {
+        setLastError(QStringLiteral("Choose at least 1 question."));
+        return false;
+    }
+
+    const int availableCount = availableQuestionCount(quizType, groupId);
+    const int minimumCount = quizType == TranslationQuiz ? 2 : 1;
+    if (availableCount < minimumCount) {
+        setLastError(quizType == TranslationQuiz
+                         ? QStringLiteral("Not enough words with translations for this quiz.")
+                         : QStringLiteral("Not enough nouns with articles for this quiz."));
+        return false;
+    }
+
+    if (questionCount > availableCount) {
+        setLastError(QStringLiteral("This scope only has %1 available %2.")
+                         .arg(availableCount)
+                         .arg(availableCount == 1 ? QStringLiteral("question") : QStringLiteral("questions")));
+        return false;
+    }
+
+    setLastError(QString());
+    return true;
+}
+
+bool DLAppStateManager::startQuiz(const QString& type, int groupId, int questionCount)
+{
+    const QuizType quizType = quizTypeFromString(type);
+    if (!canStartQuiz(type, groupId, questionCount)) {
+        return false;
+    }
+
+    const int availableCount = availableQuestionCount(quizType, groupId);
+    const QVariantList pool = quizType == ArticleQuiz
+        ? DLDatabaseManager::instance().fetchNouns(groupId)
+        : DLDatabaseManager::instance().fetchRandomWords(availableCount, groupId);
+
+    QVariantList questionRows = pool;
+    if (quizType == ArticleQuiz) {
+        std::shuffle(questionRows.begin(), questionRows.end(), *QRandomGenerator::global());
+    }
+
+    m_quizQuestions.clear();
+    const int limit = std::min(questionCount, static_cast<int>(questionRows.size()));
+    for (int i = 0; i < limit; ++i) {
+        const QVariantMap question = buildQuestion(quizType, questionRows.at(i).toMap(), pool);
+        if (!question.isEmpty()) {
+            m_quizQuestions.append(question);
+        }
+    }
+
+    if (m_quizQuestions.isEmpty()) {
+        setLastError(QStringLiteral("Unable to build quiz questions."));
+        return false;
+    }
+
+    m_activeQuizType = quizType;
+    m_selectedQuizType = quizType;
+    m_quizGroupId = groupId;
+    m_currentQuestionIndex = 0;
+    m_correctAnswerCount = 0;
+    m_wrongAnswerCount = 0;
+    m_quizFinished = false;
+    m_quizResultCache.clear();
+
+    setLastError(QString());
+    emit quizStateChanged();
+    navigateTo(quizType == ArticleQuiz ? ArticleQuizSessionPage : TranslationQuizSessionPage);
+    return true;
+}
+
+QVariantMap DLAppStateManager::currentQuizQuestion() const
+{
+    if (m_quizQuestions.isEmpty()
+        || m_currentQuestionIndex < 0
+        || m_currentQuestionIndex >= m_quizQuestions.size()) {
+        return {};
+    }
+
+    QVariantMap question = m_quizQuestions.at(m_currentQuestionIndex);
+    question.insert(QStringLiteral("index"), m_currentQuestionIndex);
+    question.insert(QStringLiteral("number"), m_currentQuestionIndex + 1);
+    question.insert(QStringLiteral("total"), m_quizQuestions.size());
+    question.insert(QStringLiteral("quizType"), quizTypeToString(m_activeQuizType));
+    question.insert(QStringLiteral("quizTitle"), quizTypeTitle(m_activeQuizType));
+    return question;
+}
+
+QVariantMap DLAppStateManager::submitQuizAnswer(const QString& answer)
+{
+    if (m_quizQuestions.isEmpty()
+        || m_currentQuestionIndex < 0
+        || m_currentQuestionIndex >= m_quizQuestions.size()) {
+        setLastError(QStringLiteral("No active quiz question."));
+        return {};
+    }
+
+    QVariantMap question = m_quizQuestions[m_currentQuestionIndex];
+    if (question.value(QStringLiteral("isAnswered")).toBool()) {
+        return currentQuizQuestion();
+    }
+
+    const QString selectedAnswer = answer.trimmed();
+    const QString correctAnswer = question.value(QStringLiteral("answer")).toString();
+    const bool isCorrect = QString::compare(selectedAnswer, correctAnswer, Qt::CaseInsensitive) == 0;
+    const int wordId = question.value(QStringLiteral("wordId")).toInt();
+
+    question.insert(QStringLiteral("selectedAnswer"), selectedAnswer);
+    question.insert(QStringLiteral("isAnswered"), true);
+    question.insert(QStringLiteral("isCorrect"), isCorrect);
+    question.insert(QStringLiteral("feedback"), isCorrect
+                        ? QStringLiteral("Correct")
+                        : QStringLiteral("Correct answer: %1").arg(correctAnswer));
+    m_quizQuestions[m_currentQuestionIndex] = question;
+
+    if (isCorrect) {
+        ++m_correctAnswerCount;
+        if (!DLDatabaseManager::instance().incrementCorrectAnswer(wordId)) {
+            setLastError(DLDatabaseManager::instance().lastError());
+        } else {
+            setLastError(QString());
+        }
+    } else {
+        ++m_wrongAnswerCount;
+        if (!DLDatabaseManager::instance().incrementWrongAnswer(wordId)) {
+            setLastError(DLDatabaseManager::instance().lastError());
+        } else {
+            setLastError(QString());
+        }
+    }
+
+    emit wordsChanged();
+    emit quizStateChanged();
+    return currentQuizQuestion();
+}
+
+bool DLAppStateManager::nextQuizQuestion()
+{
+    if (m_quizQuestions.isEmpty()) {
+        setLastError(QStringLiteral("No active quiz."));
+        return false;
+    }
+
+    if (m_currentQuestionIndex + 1 < m_quizQuestions.size()) {
+        ++m_currentQuestionIndex;
+        setLastError(QString());
+        emit quizStateChanged();
+        return true;
+    }
+
+    m_quizFinished = true;
+    updateQuizResultCache();
+    setLastError(QString());
+    emit quizStateChanged();
+    navigateTo(QuizResults);
+    return false;
+}
+
+QVariantMap DLAppStateManager::quizProgress() const
+{
+    QVariantMap progress;
+    const int total = static_cast<int>(m_quizQuestions.size());
+    const int answered = m_correctAnswerCount + m_wrongAnswerCount;
+    progress.insert(QStringLiteral("index"), total > 0 ? m_currentQuestionIndex : 0);
+    progress.insert(QStringLiteral("number"), total > 0 ? m_currentQuestionIndex + 1 : 0);
+    progress.insert(QStringLiteral("total"), total);
+    progress.insert(QStringLiteral("answered"), answered);
+    progress.insert(QStringLiteral("correct"), m_correctAnswerCount);
+    progress.insert(QStringLiteral("wrong"), m_wrongAnswerCount);
+    progress.insert(QStringLiteral("finished"), m_quizFinished);
+    progress.insert(QStringLiteral("quizType"), quizTypeToString(m_activeQuizType));
+    progress.insert(QStringLiteral("quizTitle"), quizTypeTitle(m_activeQuizType));
+    progress.insert(QStringLiteral("percent"), total > 0 ? qRound((answered * 100.0) / total) : 0);
+    return progress;
+}
+
+QVariantMap DLAppStateManager::quizResult() const
+{
+    if (!m_quizResultCache.isEmpty()) {
+        return m_quizResultCache;
+    }
+
+    QVariantMap result;
+    const int total = static_cast<int>(m_quizQuestions.size());
+    const int answered = m_correctAnswerCount + m_wrongAnswerCount;
+    result.insert(QStringLiteral("quizType"), quizTypeToString(m_activeQuizType));
+    result.insert(QStringLiteral("quizTitle"), quizTypeTitle(m_activeQuizType));
+    result.insert(QStringLiteral("total"), total);
+    result.insert(QStringLiteral("answered"), answered);
+    result.insert(QStringLiteral("correct"), m_correctAnswerCount);
+    result.insert(QStringLiteral("wrong"), m_wrongAnswerCount);
+    result.insert(QStringLiteral("accuracy"), answered > 0 ? qRound((m_correctAnswerCount * 100.0) / answered) : 0);
+    result.insert(QStringLiteral("groupId"), m_quizGroupId);
+    return result;
+}
+
+void DLAppStateManager::resetQuiz()
+{
+    m_activeQuizType = UnknownQuiz;
+    m_quizGroupId = -1;
+    m_currentQuestionIndex = 0;
+    m_correctAnswerCount = 0;
+    m_wrongAnswerCount = 0;
+    m_quizFinished = false;
+    m_quizQuestions.clear();
+    m_quizResultCache.clear();
+    setLastError(QString());
+    emit quizStateChanged();
+}
+
 void DLAppStateManager::navigateTo(const DLScreen &screen)
 {
     if (m_currentScreen == screen)
@@ -460,6 +732,136 @@ void DLAppStateManager::setSelectedWordId(int id)
 
     m_selectedWordId = id;
     emit selectedWordIdChanged();
+}
+
+DLAppStateManager::QuizType DLAppStateManager::quizTypeFromString(const QString& type) const
+{
+    const QString normalized = type.trimmed().toLower();
+    if (normalized == QStringLiteral("translation") || normalized == QStringLiteral("translation_quiz")) {
+        return TranslationQuiz;
+    }
+
+    if (normalized == QStringLiteral("article") || normalized == QStringLiteral("article_quiz")) {
+        return ArticleQuiz;
+    }
+
+    return UnknownQuiz;
+}
+
+QString DLAppStateManager::quizTypeToString(QuizType type) const
+{
+    switch (type) {
+    case TranslationQuiz:
+        return QStringLiteral("translation");
+    case ArticleQuiz:
+        return QStringLiteral("article");
+    default:
+        return QString();
+    }
+}
+
+QString DLAppStateManager::quizTypeTitle(QuizType type) const
+{
+    switch (type) {
+    case TranslationQuiz:
+        return QStringLiteral("Translation Quiz");
+    case ArticleQuiz:
+        return QStringLiteral("Article Quiz");
+    default:
+        return QStringLiteral("Quiz");
+    }
+}
+
+int DLAppStateManager::availableQuestionCount(QuizType type, int groupId) const
+{
+    if (type == TranslationQuiz) {
+        return DLDatabaseManager::instance().getWordCount(groupId);
+    }
+
+    if (type == ArticleQuiz) {
+        return DLDatabaseManager::instance().getNounCount(groupId);
+    }
+
+    return 0;
+}
+
+QVariantList DLAppStateManager::answerOptionsForTranslation(const QVariantMap& word, const QVariantList& pool) const
+{
+    QVariantList options;
+    QSet<QString> seen;
+
+    const QString correctAnswer = word.value(QStringLiteral("native_translation")).toString().trimmed();
+    if (!correctAnswer.isEmpty()) {
+        options.append(correctAnswer);
+        seen.insert(correctAnswer.toLower());
+    }
+
+    QVariantList shuffledPool = pool;
+    std::shuffle(shuffledPool.begin(), shuffledPool.end(), *QRandomGenerator::global());
+
+    for (const QVariant& item : shuffledPool) {
+        if (options.size() >= 4) {
+            break;
+        }
+
+        const QString option = item.toMap().value(QStringLiteral("native_translation")).toString().trimmed();
+        const QString key = option.toLower();
+        if (!option.isEmpty() && !seen.contains(key)) {
+            options.append(option);
+            seen.insert(key);
+        }
+    }
+
+    std::shuffle(options.begin(), options.end(), *QRandomGenerator::global());
+    return options;
+}
+
+QVariantMap DLAppStateManager::buildQuestion(QuizType type, const QVariantMap& word, const QVariantList& pool) const
+{
+    const int wordId = word.value(QStringLiteral("id")).toInt();
+    const QString germanWord = word.value(QStringLiteral("german_word")).toString().trimmed();
+    if (wordId <= 0 || germanWord.isEmpty()) {
+        return {};
+    }
+
+    QVariantMap question;
+    question.insert(QStringLiteral("wordId"), wordId);
+    question.insert(QStringLiteral("prompt"), germanWord);
+    question.insert(QStringLiteral("germanWord"), germanWord);
+    question.insert(QStringLiteral("nativeTranslation"), word.value(QStringLiteral("native_translation")).toString());
+    question.insert(QStringLiteral("exampleDe"), word.value(QStringLiteral("example_phrase_de")).toString());
+    question.insert(QStringLiteral("exampleNative"), word.value(QStringLiteral("example_phrase_native")).toString());
+    question.insert(QStringLiteral("selectedAnswer"), QString());
+    question.insert(QStringLiteral("isAnswered"), false);
+    question.insert(QStringLiteral("isCorrect"), false);
+    question.insert(QStringLiteral("feedback"), QString());
+
+    if (type == ArticleQuiz) {
+        const QString article = word.value(QStringLiteral("article")).toString().trimmed();
+        if (article != QStringLiteral("der") && article != QStringLiteral("die") && article != QStringLiteral("das")) {
+            return {};
+        }
+
+        question.insert(QStringLiteral("instruction"), QStringLiteral("Choose the correct article."));
+        question.insert(QStringLiteral("answer"), article);
+        question.insert(QStringLiteral("options"), QVariantList({ QStringLiteral("der"), QStringLiteral("die"), QStringLiteral("das") }));
+    } else if (type == TranslationQuiz) {
+        const QString translation = word.value(QStringLiteral("native_translation")).toString().trimmed();
+        if (translation.isEmpty()) {
+            return {};
+        }
+
+        question.insert(QStringLiteral("instruction"), QStringLiteral("Choose the native translation."));
+        question.insert(QStringLiteral("answer"), translation);
+        question.insert(QStringLiteral("options"), answerOptionsForTranslation(word, pool));
+    }
+
+    return question;
+}
+
+void DLAppStateManager::updateQuizResultCache()
+{
+    m_quizResultCache = quizResult();
 }
 
 QVariantList DLAppStateManager::sortedWords(const QVariantList& words, const QString& sortMode) const
