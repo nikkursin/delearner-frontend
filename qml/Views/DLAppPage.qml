@@ -3,6 +3,7 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import Felgo
 
 Page {
     id: root
@@ -11,7 +12,13 @@ Page {
 
     property string activeTab: ""
     property bool showHeader: title.length > 0
-    property int pagePadding: 18
+    property int pagePadding: 20
+    property int pageTopPadding: 18
+    property int pageBottomPadding: 6
+    property int navigationBarHeight: 64
+
+    readonly property real safeAreaTop: root.safeAreaInset("top")
+    readonly property real safeAreaBottom: root.safeAreaInset("bottom")
 
     readonly property color bg: "#f6f7fb"
     readonly property color cardBg: "#ffffff"
@@ -24,6 +31,16 @@ Page {
         color: root.bg
     }
 
+    function safeAreaInset(edge) {
+        var insets = NativeUtils.safeAreaInsets;
+        if (insets && insets[edge] !== undefined && insets[edge] !== null) {
+            var inset = Number(insets[edge]);
+            return isNaN(inset) ? 0 : Math.max(0, inset);
+        }
+
+        return 0;
+    }
+
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
@@ -31,7 +48,7 @@ Page {
         Item {
             visible: root.showHeader
             Layout.fillWidth: true
-            Layout.preferredHeight: visible ? 72 : 0
+            Layout.preferredHeight: visible ? root.safeAreaTop + 72 : 0
 
             Text {
                 anchors {
@@ -56,7 +73,7 @@ Page {
             Layout.fillHeight: true
             clip: true
             contentWidth: width
-            contentHeight: contentColumn.implicitHeight + root.pagePadding
+            contentHeight: contentColumn.y + contentColumn.implicitHeight + root.pageBottomPadding
             boundsBehavior: Flickable.StopAtBounds
 
             ScrollBar.vertical: ScrollBar {
@@ -73,14 +90,14 @@ Page {
                     leftMargin: root.pagePadding
                     rightMargin: root.pagePadding
                     top: parent.top
-                    topMargin: root.showHeader ? 0 : root.pagePadding
+                    topMargin: root.showHeader ? root.pageTopPadding : root.safeAreaTop + root.pageTopPadding
                 }
             }
         }
 
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 78
+            Layout.preferredHeight: root.navigationBarHeight + root.safeAreaBottom
             color: root.cardBg
             border.color: root.line
             border.width: 1
@@ -90,18 +107,33 @@ Page {
                     fill: parent
                     leftMargin: 7
                     rightMargin: 7
-                    topMargin: 7
-                    bottomMargin: 10
+                    topMargin: 6
+                    bottomMargin: root.safeAreaBottom
                 }
                 spacing: 0
 
                 Repeater {
                     model: [
-                        { key: "words", label: "Words" },
-                        { key: "groups", label: "Groups" },
-                        { key: "add", label: "Add" },
-                        { key: "quiz", label: "Quiz" },
-                        { key: "settings", label: "Settings" }
+                        {
+                            key: "words",
+                            label: "Words"
+                        },
+                        {
+                            key: "groups",
+                            label: "Groups"
+                        },
+                        {
+                            key: "add",
+                            label: "Add"
+                        },
+                        {
+                            key: "quiz",
+                            label: "Quiz"
+                        },
+                        {
+                            key: "settings",
+                            label: "Settings"
+                        }
                     ]
 
                     delegate: Item {
@@ -137,15 +169,15 @@ Page {
                             anchors.fill: parent
                             onClicked: {
                                 if (tabDelegate.modelData.key === "words") {
-                                    appStateManager.goWordsPage()
+                                    appStateManager.goWordsPage();
                                 } else if (tabDelegate.modelData.key === "groups") {
-                                    appStateManager.goGroupsPage()
+                                    appStateManager.goGroupsPage();
                                 } else if (tabDelegate.modelData.key === "add") {
-                                    appStateManager.goAddEditWordPage()
+                                    appStateManager.goAddEditWordPage();
                                 } else if (tabDelegate.modelData.key === "quiz") {
-                                    appStateManager.goQuizHomePage()
+                                    appStateManager.goQuizHomePage();
                                 } else if (tabDelegate.modelData.key === "settings") {
-                                    appStateManager.goSettingsPage()
+                                    appStateManager.goSettingsPage();
                                 }
                             }
                         }
