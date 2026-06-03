@@ -2,6 +2,7 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Controls.impl
 import QtQuick.Layouts
 import Felgo
 
@@ -116,23 +117,28 @@ Page {
                     model: [
                         {
                             key: "words",
-                            label: "Words"
+                            label: "Words",
+                            icon: Qt.resolvedUrl("../../assets/icons/words_list_icon.svg")
                         },
                         {
                             key: "groups",
-                            label: "Groups"
+                            label: "Groups",
+                            icon: Qt.resolvedUrl("../../assets/icons/groups_icon.svg")
                         },
                         {
                             key: "add",
-                            label: "Add"
+                            label: "Add",
+                            icon: Qt.resolvedUrl("../../assets/icons/add_new_word_icon.svg")
                         },
                         {
                             key: "quiz",
-                            label: "Quiz"
+                            label: "Quiz",
+                            icon: Qt.resolvedUrl("../../assets/icons/quiz_icon.svg")
                         },
                         {
                             key: "settings",
-                            label: "Settings"
+                            label: "Settings",
+                            icon: Qt.resolvedUrl("../../assets/icons/settings_icon.svg")
                         }
                     ]
 
@@ -149,20 +155,34 @@ Page {
                         Rectangle {
                             anchors.centerIn: parent
                             width: Math.min(parent.width - 4, 64)
-                            height: 48
+                            height: 52
                             radius: 16
                             color: tabDelegate.selected ? Qt.rgba(51 / 255, 127 / 255, 230 / 255, 0.12) : "transparent"
                         }
 
-                        Text {
+                        Column {
                             anchors.centerIn: parent
-                            text: tabDelegate.modelData.label
-                            color: tabDelegate.selected ? root.blue : root.textMuted
-                            font.pixelSize: 12
-                            font.weight: Font.Bold
-                            horizontalAlignment: Text.AlignHCenter
-                            elide: Text.ElideRight
                             width: parent.width
+                            spacing: 3
+
+                            IconImage {
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                source: tabDelegate.modelData.icon
+                                width: 24
+                                height: 24
+                                color: tabDelegate.selected ? root.blue : root.textMuted
+                                opacity: tabDelegate.selected ? 1.0 : 0.82
+                            }
+
+                            Text {
+                                text: tabDelegate.modelData.label
+                                color: tabDelegate.selected ? root.blue : root.textMuted
+                                font.pixelSize: 11
+                                font.weight: Font.Bold
+                                horizontalAlignment: Text.AlignHCenter
+                                elide: Text.ElideRight
+                                width: parent.width
+                            }
                         }
 
                         MouseArea {
