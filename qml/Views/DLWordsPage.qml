@@ -2,6 +2,7 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Controls.impl
 import QtQuick.Layouts
 
 DLAppPage {
@@ -29,6 +30,7 @@ DLAppPage {
     readonly property color redSoft: Qt.rgba(220 / 255, 53 / 255, 69 / 255, 0.10)
     readonly property color pink: "#e94f72"
     readonly property color orange: "#e27a34"
+    readonly property url sortWordsIcon: Qt.resolvedUrl("../../assets/icons/sort_words_icon.svg")
 
     readonly property var sortOptions: [
         { label: "Newest", value: "newest" },
@@ -214,7 +216,7 @@ DLAppPage {
             ComboBox {
                 id: sortCombo
 
-                Layout.preferredWidth: 112
+                Layout.preferredWidth: 44
                 Layout.preferredHeight: 40
                 model: root.sortOptions
                 textRole: "label"
@@ -232,15 +234,65 @@ DLAppPage {
                     border.width: 1
                 }
 
-                contentItem: Text {
-                    leftPadding: 12
-                    rightPadding: 28
-                    verticalAlignment: Text.AlignVCenter
-                    text: sortCombo.displayText
-                    color: root.blue
-                    font.pixelSize: sortCombo.font.pixelSize
-                    font.weight: Font.Bold
-                    elide: Text.ElideRight
+                indicator: null
+
+                delegate: ItemDelegate {
+                    id: sortOptionDelegate
+
+                    required property int index
+                    required property var modelData
+
+                    width: sortCombo.popup.width
+                    height: 42
+                    highlighted: sortCombo.highlightedIndex === sortOptionDelegate.index
+
+                    contentItem: Text {
+                        text: sortOptionDelegate.modelData.label
+                        color: sortOptionDelegate.highlighted ? root.blue : root.textMain
+                        font.pixelSize: 14
+                        font.weight: Font.Bold
+                        verticalAlignment: Text.AlignVCenter
+                        elide: Text.ElideRight
+                    }
+
+                    background: Rectangle {
+                        color: sortOptionDelegate.highlighted ? Qt.rgba(51 / 255, 127 / 255, 230 / 255, 0.10) : root.cardBg
+                    }
+                }
+
+                contentItem: Item {
+                    implicitWidth: 44
+                    implicitHeight: 40
+
+                    IconImage {
+                        anchors.centerIn: parent
+                        source: root.sortWordsIcon
+                        width: 22
+                        height: 22
+                        color: root.blue
+                    }
+                }
+
+                popup: Popup {
+                    y: sortCombo.height + 6
+                    x: sortCombo.width - width
+                    width: 132
+                    implicitHeight: contentItem.implicitHeight
+                    padding: 0
+
+                    contentItem: ListView {
+                        clip: true
+                        implicitHeight: contentHeight
+                        model: sortCombo.popup.visible ? sortCombo.delegateModel : null
+                        currentIndex: sortCombo.highlightedIndex
+                    }
+
+                    background: Rectangle {
+                        radius: 14
+                        color: root.cardBg
+                        border.color: root.line
+                        border.width: 1
+                    }
                 }
             }
         }

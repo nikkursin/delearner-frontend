@@ -33,6 +33,8 @@ file(GLOB_RECURSE QmlFiles CONFIGURE_DEPENDS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR
 # Find all non-QML/JS files in the qml and assets folder to add as resources:
 file(GLOB_RECURSE AssetsFiles CONFIGURE_DEPENDS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} assets/* qml/*)
 list(REMOVE_ITEM AssetsFiles ${QmlFiles})
+list(APPEND AssetsFiles assets/icons/sort_words_icon.svg)
+list(REMOVE_DUPLICATES AssetsFiles)
 
 find_package(Qt6 REQUIRED COMPONENTS Core)
 
