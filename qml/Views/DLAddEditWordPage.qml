@@ -3,6 +3,7 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import "../Components"
 
 DLAppPage {
     id: root
@@ -38,6 +39,7 @@ DLAppPage {
     readonly property color fieldBg: "#f1f4f9"
     readonly property color red: "#dc3545"
     readonly property color redSoft: Qt.rgba(220 / 255, 53 / 255, 69 / 255, 0.10)
+    readonly property color blueSoft: Qt.rgba(51 / 255, 127 / 255, 230 / 255, 0.12)
 
     Component.onCompleted: {
         loadGroups()
@@ -211,7 +213,7 @@ DLAppPage {
 
     ColumnLayout {
         Layout.fillWidth: true
-        spacing: 14
+        spacing: 16
 
         Text {
             visible: root.errorMessage.length > 0
@@ -270,7 +272,7 @@ DLAppPage {
 
             Flow {
                 Layout.fillWidth: true
-                spacing: 8
+                spacing: 10
 
                 Repeater {
                     model: root.partOfSpeechOptions
@@ -280,6 +282,7 @@ DLAppPage {
 
                         required property var modelData
 
+                        width: Math.max(92, implicitWidth)
                         text: partOfSpeechDelegate.modelData
                         selected: root.selectedPartOfSpeech === partOfSpeechDelegate.modelData
                         onClicked: root.selectedPartOfSpeech = partOfSpeechDelegate.modelData
@@ -315,22 +318,19 @@ DLAppPage {
         FieldBlock {
             label: "Group"
 
-            ComboBox {
+            DLGroupDropdown {
                 id: groupCombo
+
                 Layout.fillWidth: true
+                Layout.preferredHeight: 52
                 model: root.groupOptions
-                textRole: "name"
-                font.pixelSize: 15
-                background: FieldBackground {}
-                contentItem: Text {
-                    leftPadding: 14
-                    rightPadding: 36
-                    verticalAlignment: Text.AlignVCenter
-                    text: groupCombo.displayText
-                    color: root.textMain
-                    font: groupCombo.font
-                    elide: Text.ElideRight
-                }
+                cardBg: root.cardBg
+                fieldBg: root.fieldBg
+                textMain: root.textMain
+                textMuted: root.textMuted
+                line: root.line
+                accent: root.blue
+                emptyText: "No group"
 
                 onActivated: function(index) {
                     root.selectedGroupId = root.groupOptions[index].id
@@ -403,7 +403,7 @@ DLAppPage {
         property bool requiredField: false
 
         Layout.fillWidth: true
-        spacing: 7
+        spacing: 9
 
         Text {
             Layout.leftMargin: 4
@@ -416,8 +416,8 @@ DLAppPage {
     }
 
     component FieldBackground: Rectangle {
-        implicitHeight: 48
-        radius: 14
+        implicitHeight: 52
+        radius: 16
         color: root.fieldBg
         border.color: root.line
         border.width: 1
@@ -428,14 +428,19 @@ DLAppPage {
 
         property bool selected: false
 
-        implicitHeight: 40
+        implicitWidth: chipLabel.implicitWidth + 28
+        implicitHeight: 42
         font.pixelSize: 13
-        font.weight: Font.Bold
+        font.weight: Font.ExtraBold
         padding: 0
 
         contentItem: Text {
+            id: chipLabel
+
             text: chip.text
-            color: chip.selected ? "white" : root.textMuted
+            leftPadding: 14
+            rightPadding: 14
+            color: chip.selected ? root.blue : root.textMuted
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
             font: chip.font
@@ -443,10 +448,10 @@ DLAppPage {
         }
 
         background: Rectangle {
-            radius: 20
-            color: chip.selected ? root.blue : root.cardBg
+            radius: 21
+            color: chip.selected ? root.blueSoft : root.cardBg
             border.color: chip.selected ? root.blue : root.line
-            border.width: 1
+            border.width: chip.selected ? 2 : 1
         }
     }
 }
