@@ -10,129 +10,193 @@ DLAppPage {
     title: ""
     showHeader: false
     activeTab: "quiz"
+    pageBackground: "#ffffff"
+    pageBottomPadding: 24
 
     property string quizType: ""
     property string quizTitle: "Quiz"
-    property var groupOptions: [{ id: -1, name: "All words" }]
+    property var groupOptions: [
+        {
+            id: -1,
+            name: "All Words",
+            count: 0
+        }
+    ]
     property int selectedGroupId: -1
     property int questionCount: 10
     property int availableCount: 0
     property string errorMessage: ""
 
-    readonly property color fieldBg: "#f1f4f9"
-    readonly property color green: "#35a969"
-    readonly property color red: "#dc3545"
-    readonly property color redSoft: Qt.rgba(220 / 255, 53 / 255, 69 / 255, 0.10)
-
-    readonly property var countOptions: [5, 10, 15, 20]
+    readonly property bool isArticle: quizType === "article"
+    readonly property color accent: isArticle ? "#ff9500" : "#007aff"
+    readonly property color accentText: isArticle ? "#c96f00" : "#007aff"
+    readonly property color accentSoft: isArticle ? Qt.rgba(255 / 255, 149 / 255, 0 / 255, 0.12) : Qt.rgba(0 / 255, 122 / 255, 255 / 255, 0.10)
+    readonly property color softPanel: "#f5f5f7"
+    readonly property color rowLine: "#e3e3e8"
+    readonly property color red: "#ff3b30"
+    readonly property color redSoft: Qt.rgba(255 / 255, 59 / 255, 48 / 255, 0.10)
 
     Component.onCompleted: reloadSetup()
 
     function reloadSetup() {
-        quizType = appStateManager.selectedQuizType()
+        quizType = appStateManager.selectedQuizType();
         if (quizType.length === 0) {
-            quizType = "translation"
+            quizType = "translation";
         }
 
-        quizTitle = quizType === "article" ? "Article Quiz" : "Translation Quiz"
-        loadGroups()
-        refreshAvailability()
+        quizTitle = quizType === "article" ? "Article Quiz" : "Translation Quiz";
+        loadGroups();
+        refreshAvailability();
     }
 
     function loadGroups() {
-        var groups = appStateManager.availableGroups()
-        var options = [{ id: -1, name: "All words" }]
+        var groups = appStateManager.availableGroups();
+        var options = [
+            {
+                id: -1,
+                name: "All Words",
+                count: appStateManager.availableQuizQuestionCount(quizType, -1)
+            }
+        ];
 
         for (var i = 0; i < groups.length; ++i) {
             options.push({
                 id: groups[i].id,
-                name: groups[i].name
-            })
+                name: groups[i].name,
+                count: appStateManager.availableQuizQuestionCount(quizType, groups[i].id)
+            });
         }
 
-        groupOptions = options
-        groupCombo.currentIndex = 0
-        selectedGroupId = -1
+        groupOptions = options;
+        selectedGroupId = -1;
     }
 
     function refreshAvailability() {
-        availableCount = appStateManager.availableQuizQuestionCount(quizType, selectedGroupId)
-
-        questionCount = Math.max(1, Math.min(questionCount, Math.max(1, availableCount)))
-        errorMessage = ""
-        appStateManager.canStartQuiz(quizType, selectedGroupId, questionCount)
+        availableCount = appStateManager.availableQuizQuestionCount(quizType, selectedGroupId);
+        questionCount = Math.max(1, Math.min(questionCount, Math.max(1, availableCount)));
+        errorMessage = "";
+        appStateManager.canStartQuiz(quizType, selectedGroupId, questionCount);
         if (appStateManager.lastError) {
-            errorMessage = appStateManager.lastError
+            errorMessage = appStateManager.lastError;
         }
     }
 
+    function selectGroup(groupId) {
+        selectedGroupId = groupId;
+        refreshAvailability();
+    }
+
     function selectQuestionCount(count) {
-        questionCount = count
-        errorMessage = ""
-        appStateManager.canStartQuiz(quizType, selectedGroupId, questionCount)
+        questionCount = Math.max(1, Math.min(Math.round(count), Math.max(1, availableCount)));
+        errorMessage = "";
+        appStateManager.canStartQuiz(quizType, selectedGroupId, questionCount);
         if (appStateManager.lastError) {
-            errorMessage = appStateManager.lastError
+            errorMessage = appStateManager.lastError;
         }
     }
 
     function startQuiz() {
         if (!appStateManager.startQuiz(quizType, selectedGroupId, questionCount)) {
-            errorMessage = appStateManager.lastError || "Unable to start quiz."
+            errorMessage = appStateManager.lastError || "Unable to start quiz.";
         }
     }
 
     Item {
         Layout.fillWidth: true
-        Layout.preferredHeight: 58
+        Layout.preferredHeight: 92
 
-        Text {
+        Column {
             anchors {
                 left: parent.left
-                verticalCenter: parent.verticalCenter
+                right: parent.right
+                bottom: parent.bottom
+                bottomMargin: 18
             }
-            text: "Quiz"
-            color: root.blue
-            font.pixelSize: 15
-            font.weight: Font.Bold
+            spacing: 4
 
-            MouseArea {
-                anchors.fill: parent
-                anchors.margins: -10
-                onClicked: appStateManager.goQuizHomePage()
+            Text {
+                width: parent.width
+                text: "Quiz Setup"
+                color: root.textMain
+                font.pixelSize: 28
+                font.weight: Font.ExtraBold
+                elide: Text.ElideRight
+            }
+
+            Text {
+                width: parent.width
+                text: "Configure the selected quiz before starting."
+                color: root.textMuted
+                font.pixelSize: 14
+                wrapMode: Text.WordWrap
             }
         }
 
-        Text {
-            anchors.centerIn: parent
-            text: "Setup"
-            color: root.textMain
-            font.pixelSize: 17
-            font.weight: Font.ExtraBold
+        Rectangle {
+            anchors {
+                left: parent.left
+                right: parent.right
+                bottom: parent.bottom
+            }
+            height: 1
+            color: "#ececec"
         }
     }
 
     ColumnLayout {
         Layout.fillWidth: true
-        spacing: 14
+        Layout.topMargin: 20
+        spacing: 24
 
-        Text {
+        Rectangle {
             Layout.fillWidth: true
-            text: root.quizTitle
-            color: root.textMain
-            font.pixelSize: 30
-            font.weight: Font.ExtraBold
-            elide: Text.ElideRight
-        }
+            Layout.preferredHeight: 116
+            radius: 18
+            color: root.accentSoft
 
-        Text {
-            Layout.fillWidth: true
-            text: root.quizType === "article"
-                  ? "Practice German noun articles."
-                  : "Practice German-to-native translations."
-            color: root.textMuted
-            font.pixelSize: 15
-            font.weight: Font.DemiBold
-            wrapMode: Text.WordWrap
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: 18
+                spacing: 10
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 12
+
+                    Rectangle {
+                        Layout.preferredWidth: 34
+                        Layout.preferredHeight: 34
+                        radius: 10
+                        color: root.accent
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: root.isArticle ? "der" : "A"
+                            color: "white"
+                            font.pixelSize: root.isArticle ? 12 : 14
+                            font.weight: Font.ExtraBold
+                        }
+                    }
+
+                    Text {
+                        Layout.fillWidth: true
+                        text: root.quizTitle
+                        color: root.accentText
+                        font.pixelSize: 17
+                        font.weight: Font.ExtraBold
+                        elide: Text.ElideRight
+                    }
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    text: root.isArticle ? "Practice German noun articles: der, die, and das." : "Practice translations between German and your selected native language."
+                    color: "#555555"
+                    font.pixelSize: 14
+                    wrapMode: Text.WordWrap
+                    lineHeight: 1.12
+                }
+            }
         }
 
         Text {
@@ -155,150 +219,249 @@ DLAppPage {
             }
         }
 
-        SetupBlock {
-            label: "Scope"
+        SetupSection {
+            title: "Word Groups"
 
-            ComboBox {
-                id: groupCombo
-
+            Rectangle {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 46
-                model: root.groupOptions
-                textRole: "name"
+                implicitHeight: groupRows.implicitHeight
+                radius: 16
+                color: root.softPanel
+                clip: true
 
-                onActivated: function(index) {
-                    root.selectedGroupId = root.groupOptions[index].id
-                    root.refreshAvailability()
-                }
+                ColumnLayout {
+                    id: groupRows
 
-                background: Rectangle {
-                    radius: 8
-                    color: root.cardBg
-                    border.color: root.line
-                    border.width: 1
-                }
-            }
-        }
+                    width: parent.width
+                    spacing: 0
 
-        SetupBlock {
-            label: "Questions"
+                    Repeater {
+                        model: root.groupOptions
 
-            SpinBox {
-                id: questionSpinBox
+                        delegate: Button {
+                            id: groupRow
 
-                Layout.fillWidth: true
-                Layout.preferredHeight: 46
-                from: 1
-                to: Math.max(1, root.availableCount)
-                value: root.questionCount
-                editable: true
-                onValueModified: root.selectQuestionCount(value)
+                            required property int index
+                            required property var modelData
+                            readonly property bool selected: root.selectedGroupId === groupRow.modelData.id
 
-                background: Rectangle {
-                    radius: 8
-                    color: root.cardBg
-                    border.color: root.line
-                    border.width: 1
-                }
-            }
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 54
+                            text: ""
+                            onClicked: root.selectGroup(groupRow.modelData.id)
 
-            Flow {
-                Layout.fillWidth: true
-                spacing: 10
+                            contentItem: RowLayout {
+                                anchors.fill: parent
+                                anchors.leftMargin: 16
+                                anchors.rightMargin: 16
+                                spacing: 10
 
-                Repeater {
-                    model: root.countOptions
+                                Rectangle {
+                                    Layout.preferredWidth: 22
+                                    Layout.preferredHeight: 22
+                                    radius: 11
+                                    color: groupRow.selected ? root.accent : "transparent"
+                                    border.color: groupRow.selected ? root.accent : "#c7c7cc"
+                                    border.width: 2
 
-                    Button {
-                        id: countButton
+                                    Text {
+                                        anchors.centerIn: parent
+                                        visible: groupRow.selected
+                                        text: "✓"
+                                        color: "white"
+                                        font.pixelSize: 13
+                                        font.weight: Font.Bold
+                                    }
+                                }
 
-                        required property int modelData
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: groupRow.modelData.name
+                                    color: root.textMain
+                                    font.pixelSize: 15
+                                    elide: Text.ElideRight
+                                }
 
-                        width: 72
-                        height: 42
-                        enabled: modelData <= Math.max(1, root.availableCount)
-                        text: modelData.toString()
-                        font.pixelSize: 14
-                        font.weight: Font.ExtraBold
-                        onClicked: root.selectQuestionCount(modelData)
+                                Text {
+                                    text: groupRow.modelData.count + (root.isArticle ? " nouns" : " words")
+                                    color: "#8a8a8e"
+                                    font.pixelSize: 13
+                                }
+                            }
 
-                        contentItem: Text {
-                            text: countButton.text
-                            color: countButton.enabled
-                                   ? (root.questionCount === countButton.modelData ? "white" : root.blue)
-                                   : root.textMuted
-                            horizontalAlignment: Text.AlignHCenter
-                            verticalAlignment: Text.AlignVCenter
-                            font: countButton.font
-                        }
+                            background: Rectangle {
+                                color: groupRow.down ? Qt.rgba(0, 0, 0, 0.04) : "transparent"
 
-                        background: Rectangle {
-                            radius: 8
-                            color: root.questionCount === countButton.modelData && countButton.enabled
-                                   ? root.blue
-                                   : root.cardBg
-                            border.color: countButton.enabled ? root.blue : root.line
-                            border.width: 1
+                                Rectangle {
+                                    anchors {
+                                        left: parent.left
+                                        right: parent.right
+                                        bottom: parent.bottom
+                                        leftMargin: 16
+                                    }
+                                    height: 1
+                                    color: root.rowLine
+                                    visible: groupRow.index < root.groupOptions.length - 1
+                                }
+                            }
                         }
                     }
                 }
             }
-        }
-
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 64
-            radius: 8
-            color: root.cardBg
-            border.color: root.line
-            border.width: 1
 
             Text {
-                anchors.centerIn: parent
-                text: root.availableCount + " available in selected scope"
-                color: root.textMuted
-                font.pixelSize: 14
-                font.weight: Font.Bold
+                Layout.fillWidth: true
+                text: root.isArticle ? "For Article Quiz, this list counts only nouns with der, die, or das." : "Choose all words or narrow the session to one saved group."
+                color: "#8a8a8e"
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.WordWrap
+                font.pixelSize: 13
+                lineHeight: 1.12
             }
         }
 
-        Button {
+        SetupSection {
+            title: "Number of Questions"
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 118
+                radius: 16
+                color: root.softPanel
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: 16
+                    spacing: 10
+
+                    RowLayout {
+                        Layout.fillWidth: true
+
+                        Text {
+                            Layout.fillWidth: true
+                            text: "Questions"
+                            color: "#333333"
+                            font.pixelSize: 15
+                            font.weight: Font.DemiBold
+                        }
+
+                        Text {
+                            text: String(root.questionCount)
+                            color: root.accent
+                            font.pixelSize: 22
+                            font.weight: Font.ExtraBold
+                        }
+                    }
+
+                    Slider {
+                        id: questionSlider
+
+                        Layout.fillWidth: true
+                        from: 1
+                        to: Math.max(1, root.availableCount)
+                        stepSize: 1
+                        snapMode: Slider.SnapAlways
+                        value: root.questionCount
+                        onMoved: root.selectQuestionCount(value)
+
+                        background: Rectangle {
+                            x: questionSlider.leftPadding
+                            y: questionSlider.topPadding + questionSlider.availableHeight / 2 - height / 2
+                            width: questionSlider.availableWidth
+                            height: 6
+                            radius: 3
+                            color: Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.18)
+
+                            Rectangle {
+                                width: parent.width * Math.max(0, Math.min(1, questionSlider.visualPosition))
+                                height: parent.height
+                                radius: 3
+                                color: root.accent
+                            }
+                        }
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+
+                        Text {
+                            Layout.fillWidth: true
+                            text: "1"
+                            color: "#8a8a8e"
+                            font.pixelSize: 12
+                        }
+
+                        Text {
+                            text: String(Math.max(1, root.availableCount))
+                            color: "#8a8a8e"
+                            font.pixelSize: 12
+                        }
+                    }
+                }
+            }
+
+            Text {
+                Layout.fillWidth: true
+                text: "The final number is limited by available words in the selected group."
+                color: "#8a8a8e"
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.WordWrap
+                font.pixelSize: 13
+            }
+        }
+
+        Text {
             Layout.fillWidth: true
-            Layout.preferredHeight: 52
-            text: "Start Quiz"
+            text: root.availableCount + (root.isArticle ? " nouns available · " : " words available · ") + root.questionCount + " questions selected"
+            color: "#555555"
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.WordWrap
             font.pixelSize: 15
+            lineHeight: 1.15
+        }
+
+        Button {
+            id: startButton
+
+            Layout.fillWidth: true
+            Layout.preferredHeight: 56
+            text: "Start " + root.quizTitle
+            font.pixelSize: 17
             font.weight: Font.ExtraBold
             onClicked: root.startQuiz()
 
             contentItem: Text {
-                text: parent.text
+                text: startButton.text
                 color: "white"
                 horizontalAlignment: Text.AlignHCenter
                 verticalAlignment: Text.AlignVCenter
-                font: parent.font
+                font: startButton.font
+                elide: Text.ElideRight
             }
 
             background: Rectangle {
-                radius: 8
-                color: root.blue
+                radius: 16
+                color: root.accent
             }
         }
     }
 
-    component SetupBlock: ColumnLayout {
-        id: setupBlock
+    component SetupSection: ColumnLayout {
+        id: section
 
-        property string label: ""
+        property string title: ""
 
         Layout.fillWidth: true
-        spacing: 8
+        spacing: 10
 
         Text {
             Layout.fillWidth: true
-            text: setupBlock.label
-            color: root.textMain
-            font.pixelSize: 14
+            text: section.title.toUpperCase()
+            color: "#666666"
+            font.pixelSize: 12
             font.weight: Font.ExtraBold
+            font.letterSpacing: 0.5
+            elide: Text.ElideRight
         }
     }
 }

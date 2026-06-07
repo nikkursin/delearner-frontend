@@ -1,4 +1,4 @@
- pragma ComponentBehavior: Bound
+pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Controls
@@ -10,15 +10,22 @@ DLAppPage {
     title: ""
     showHeader: false
     activeTab: "quiz"
+    pageBackground: "#ffffff"
+    pageBottomPadding: 24
 
     property var question: ({})
     property var progress: ({})
     property string errorMessage: ""
 
-    readonly property color green: "#35a969"
-    readonly property color greenSoft: Qt.rgba(53 / 255, 169 / 255, 105 / 255, 0.12)
-    readonly property color red: "#dc3545"
-    readonly property color redSoft: Qt.rgba(220 / 255, 53 / 255, 69 / 255, 0.10)
+    readonly property color accent: "#007aff"
+    readonly property color accentSoft: Qt.rgba(0 / 255, 122 / 255, 255 / 255, 0.10)
+    readonly property color accentTrack: Qt.rgba(0 / 255, 122 / 255, 255 / 255, 0.16)
+    readonly property color optionBg: "#f5f5f7"
+    readonly property color green: "#34c759"
+    readonly property color greenText: "#168a35"
+    readonly property color greenSoft: Qt.rgba(52 / 255, 199 / 255, 89 / 255, 0.13)
+    readonly property color red: "#ff3b30"
+    readonly property color redSoft: Qt.rgba(255 / 255, 59 / 255, 48 / 255, 0.10)
 
     Component.onCompleted: refreshQuizState()
 
@@ -26,107 +33,152 @@ DLAppPage {
         target: appStateManager
 
         function onQuizStateChanged() {
-            root.refreshQuizState()
+            root.refreshQuizState();
         }
     }
 
     function refreshQuizState() {
-        question = appStateManager.currentQuizQuestion()
-        progress = appStateManager.quizProgress()
-        errorMessage = appStateManager.lastError || ""
+        question = appStateManager.currentQuizQuestion();
+        progress = appStateManager.quizProgress();
+        errorMessage = appStateManager.lastError || "";
     }
 
     function submitAnswer(answer) {
-        question = appStateManager.submitQuizAnswer(answer)
-        progress = appStateManager.quizProgress()
-        errorMessage = appStateManager.lastError || ""
+        question = appStateManager.submitQuizAnswer(answer);
+        progress = appStateManager.quizProgress();
+        errorMessage = appStateManager.lastError || "";
     }
 
     function continueQuiz() {
-        appStateManager.nextQuizQuestion()
-        refreshQuizState()
+        appStateManager.nextQuizQuestion();
+        refreshQuizState();
     }
 
     function exitQuiz() {
-        appStateManager.resetQuiz()
-        appStateManager.goQuizHomePage()
+        appStateManager.resetQuiz();
+        appStateManager.goQuizHomePage();
     }
 
     function optionTextColor(option) {
         if (Boolean(question.isAnswered) && question.answer === option) {
-            return green
+            return greenText;
         }
 
         if (Boolean(question.isAnswered) && question.selectedAnswer === option && question.answer !== option) {
-            return red
+            return red;
         }
 
-        return textMain
+        return "#222222";
     }
 
     function optionBackground(option) {
         if (Boolean(question.isAnswered) && question.answer === option) {
-            return greenSoft
+            return greenSoft;
         }
 
         if (Boolean(question.isAnswered) && question.selectedAnswer === option && question.answer !== option) {
-            return redSoft
+            return redSoft;
         }
 
-        return cardBg
+        return optionBg;
     }
 
     function optionBorder(option) {
         if (Boolean(question.isAnswered) && question.answer === option) {
-            return green
+            return green;
         }
 
         if (Boolean(question.isAnswered) && question.selectedAnswer === option && question.answer !== option) {
-            return red
+            return red;
         }
 
-        return line
+        return "transparent";
     }
 
     Item {
         Layout.fillWidth: true
-        Layout.preferredHeight: 58
+        Layout.preferredHeight: 84
 
-        Text {
+        Column {
             anchors {
                 left: parent.left
                 verticalCenter: parent.verticalCenter
             }
-            text: "Exit"
-            color: root.red
-            font.pixelSize: 15
-            font.weight: Font.Bold
+            spacing: 3
 
-            MouseArea {
-                anchors.fill: parent
-                anchors.margins: -10
-                onClicked: root.exitQuiz()
+            Text {
+                text: "Translation Quiz"
+                color: root.textMain
+                font.pixelSize: 24
+                font.weight: Font.ExtraBold
+            }
+
+            Text {
+                text: "German ↔ Native Language"
+                color: root.textMuted
+                font.pixelSize: 13
             }
         }
 
         Text {
-            anchors.centerIn: parent
-            text: "Translation Quiz"
-            color: root.textMain
-            font.pixelSize: 17
-            font.weight: Font.ExtraBold
+            anchors {
+                right: parent.right
+                verticalCenter: parent.verticalCenter
+            }
+            text: "Quit"
+            color: root.red
+            font.pixelSize: 15
+            font.weight: Font.DemiBold
+
+            MouseArea {
+                anchors.fill: parent
+                anchors.margins: -12
+                onClicked: root.exitQuiz()
+            }
+        }
+
+        Rectangle {
+            anchors {
+                left: parent.left
+                right: parent.right
+                bottom: parent.bottom
+            }
+            height: 1
+            color: "#ececec"
         }
     }
 
     ColumnLayout {
         Layout.fillWidth: true
-        spacing: 16
+        Layout.topMargin: 22
+        spacing: 22
+
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 12
+
+            Text {
+                Layout.fillWidth: true
+                text: "Question " + (root.progress.number || 0) + " of " + (root.progress.total || 0)
+                color: "#666666"
+                font.pixelSize: 14
+                font.weight: Font.DemiBold
+            }
+
+            Text {
+                text: (root.progress.correct || 0) + " correct"
+                color: root.greenText
+                font.pixelSize: 14
+                font.weight: Font.Bold
+            }
+        }
 
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 10
+            Layout.preferredHeight: 9
             radius: 5
-            color: root.line
+            color: root.accentTrack
+            clip: true
 
             Rectangle {
                 anchors {
@@ -136,80 +188,74 @@ DLAppPage {
                 }
                 width: parent.width * Math.max(0, Math.min(1, Number(root.progress.percent || 0) / 100))
                 radius: 5
-                color: root.blue
-            }
-        }
-
-        RowLayout {
-            Layout.fillWidth: true
-
-            Text {
-                Layout.fillWidth: true
-                text: "Question " + (root.progress.number || 0) + " of " + (root.progress.total || 0)
-                color: root.textMuted
-                font.pixelSize: 14
-                font.weight: Font.Bold
-            }
-
-            Text {
-                text: (root.progress.correct || 0) + " correct"
-                color: root.green
-                font.pixelSize: 14
-                font.weight: Font.Bold
+                color: root.accent
             }
         }
 
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 210
-            radius: 8
-            color: root.cardBg
-            border.color: root.line
-            border.width: 1
+            Layout.preferredHeight: Math.max(178, questionContent.implicitHeight + 48)
+            radius: 22
+            color: root.accentSoft
 
-            Column {
-                anchors {
-                    fill: parent
-                    margins: 18
+            ColumnLayout {
+                id: questionContent
+
+                anchors.centerIn: parent
+                width: parent.width - 36
+                spacing: 12
+
+                Rectangle {
+                    Layout.alignment: Qt.AlignHCenter
+                    Layout.preferredHeight: 28
+                    Layout.preferredWidth: 108
+                    radius: 14
+                    color: "#ffffff"
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: "DE → Native"
+                        color: root.accent
+                        font.pixelSize: 12
+                        font.weight: Font.ExtraBold
+                    }
                 }
-                spacing: 10
 
                 Text {
-                    width: parent.width
-                    text: "Choose the native translation"
-                    color: root.textMuted
+                    Layout.fillWidth: true
+                    text: "Select the native-language translation:"
+                    color: "#666666"
+                    horizontalAlignment: Text.AlignHCenter
                     font.pixelSize: 14
                     font.weight: Font.DemiBold
-                    elide: Text.ElideRight
+                    wrapMode: Text.WordWrap
                 }
 
                 Text {
-                    width: parent.width
+                    Layout.fillWidth: true
                     text: root.question.prompt || ""
                     color: root.textMain
-                    font.pixelSize: 38
+                    horizontalAlignment: Text.AlignHCenter
+                    font.pixelSize: 34
                     font.weight: Font.ExtraBold
                     wrapMode: Text.WordWrap
                     maximumLineCount: 2
                     elide: Text.ElideRight
-                }
-
-                Rectangle {
-                    width: parent.width
-                    height: 1
-                    color: root.line
+                    lineHeight: 0.94
                 }
 
                 Text {
                     visible: (root.question.exampleDe || "").length > 0
-                    width: parent.width
+                    Layout.fillWidth: true
                     text: root.question.exampleDe || ""
-                    color: root.textMuted
-                    font.pixelSize: 14
+                    color: "#666666"
+                    horizontalAlignment: Text.AlignHCenter
+                    font.pixelSize: 15
                     font.italic: true
                     wrapMode: Text.WordWrap
                     maximumLineCount: 2
                     elide: Text.ElideRight
+                    lineHeight: 1.12
                 }
             }
         }
@@ -224,39 +270,46 @@ DLAppPage {
             font.weight: Font.DemiBold
         }
 
-        Repeater {
-            model: root.question.options || []
+        ColumnLayout {
+            Layout.fillWidth: true
+            spacing: 12
 
-            delegate: Button {
-                id: optionButton
+            Repeater {
+                model: root.question.options || []
 
-                required property string modelData
+                delegate: Button {
+                    id: optionButton
 
-                Layout.fillWidth: true
-                Layout.preferredHeight: 56
-                text: modelData
-                enabled: !Boolean(root.question.isAnswered)
-                font.pixelSize: 15
-                font.weight: Font.ExtraBold
-                onClicked: root.submitAnswer(modelData)
+                    required property string modelData
 
-                contentItem: Text {
-                    anchors.fill: parent
-                    leftPadding: 14
-                    rightPadding: 14
-                    text: optionButton.text
-                    color: root.optionTextColor(optionButton.modelData)
-                    horizontalAlignment: Text.AlignLeft
-                    verticalAlignment: Text.AlignVCenter
-                    font: optionButton.font
-                    elide: Text.ElideRight
-                }
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 58
+                    text: modelData
+                    enabled: !Boolean(root.question.isAnswered)
+                    font.pixelSize: 16
+                    font.weight: Font.DemiBold
+                    onClicked: root.submitAnswer(modelData)
 
-                background: Rectangle {
-                    radius: 8
-                    color: root.optionBackground(optionButton.modelData)
-                    border.color: root.optionBorder(optionButton.modelData)
-                    border.width: 1
+                    contentItem: Text {
+                        anchors.fill: parent
+                        leftPadding: 14
+                        rightPadding: 14
+                        text: optionButton.text
+                        color: root.optionTextColor(optionButton.modelData)
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                        font: optionButton.font
+                        wrapMode: Text.WordWrap
+                        maximumLineCount: 2
+                        elide: Text.ElideRight
+                    }
+
+                    background: Rectangle {
+                        radius: 16
+                        color: root.optionBackground(optionButton.modelData)
+                        border.color: root.optionBorder(optionButton.modelData)
+                        border.width: Boolean(root.question.isAnswered) ? 2 : 0
+                    }
                 }
             }
         }
@@ -269,7 +322,7 @@ DLAppPage {
 
         ContinueButton {
             visible: Boolean(root.question.isAnswered)
-            text: (root.progress.number || 0) >= (root.progress.total || 0) ? "Show Results" : "Next Translation"
+            text: (root.progress.number || 0) >= (root.progress.total || 0) ? "Show Results" : "Next Question"
             onClicked: root.continueQuiz()
         }
     }
@@ -279,41 +332,45 @@ DLAppPage {
         property string message: ""
 
         Layout.fillWidth: true
-        Layout.preferredHeight: 58
-        radius: 8
+        Layout.preferredHeight: Math.max(52, feedbackText.implicitHeight + 28)
+        radius: 16
         color: correct ? root.greenSoft : root.redSoft
-        border.color: correct ? root.green : root.red
-        border.width: 1
 
         Text {
+            id: feedbackText
+
             anchors.centerIn: parent
-            width: parent.width - 24
+            width: parent.width - 28
             text: parent.message
-            color: parent.correct ? root.green : root.red
+            color: parent.correct ? root.greenText : root.red
             horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.WordWrap
             font.pixelSize: 15
-            font.weight: Font.ExtraBold
-            elide: Text.ElideRight
+            font.weight: Font.DemiBold
+            lineHeight: 1.12
         }
     }
 
     component ContinueButton: Button {
+        id: continueButton
+
         Layout.fillWidth: true
-        Layout.preferredHeight: 52
-        font.pixelSize: 15
-        font.weight: Font.ExtraBold
+        Layout.preferredHeight: 56
+        font.pixelSize: 17
+        font.weight: Font.Bold
 
         contentItem: Text {
-            text: parent.text
+            text: continueButton.text
             color: "white"
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
-            font: parent.font
+            font: continueButton.font
+            elide: Text.ElideRight
         }
 
         background: Rectangle {
-            radius: 8
-            color: root.blue
+            radius: 16
+            color: root.accent
         }
     }
 }

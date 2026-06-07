@@ -10,17 +10,23 @@ DLAppPage {
     title: ""
     showHeader: false
     activeTab: "quiz"
+    pageBackground: "#ffffff"
+    pageBottomPadding: 24
 
     property var question: ({})
     property var progress: ({})
     property string errorMessage: ""
 
-    readonly property color fieldBg: "#f1f4f9"
-    readonly property color green: "#35a969"
-    readonly property color greenSoft: Qt.rgba(53 / 255, 169 / 255, 105 / 255, 0.12)
-    readonly property color red: "#dc3545"
-    readonly property color redSoft: Qt.rgba(220 / 255, 53 / 255, 69 / 255, 0.10)
-    readonly property color pink: "#e94f72"
+    readonly property color accent: "#ff9500"
+    readonly property color accentText: "#c96f00"
+    readonly property color accentSoft: Qt.rgba(255 / 255, 149 / 255, 0 / 255, 0.12)
+    readonly property color accentTrack: Qt.rgba(255 / 255, 149 / 255, 0 / 255, 0.18)
+    readonly property color optionBg: "#f5f5f7"
+    readonly property color green: "#34c759"
+    readonly property color greenText: "#168a35"
+    readonly property color greenSoft: Qt.rgba(52 / 255, 199 / 255, 89 / 255, 0.13)
+    readonly property color red: "#ff3b30"
+    readonly property color redSoft: Qt.rgba(255 / 255, 59 / 255, 48 / 255, 0.10)
 
     Component.onCompleted: refreshQuizState()
 
@@ -28,141 +34,176 @@ DLAppPage {
         target: appStateManager
 
         function onQuizStateChanged() {
-            root.refreshQuizState()
+            root.refreshQuizState();
         }
     }
 
     function refreshQuizState() {
-        question = appStateManager.currentQuizQuestion()
-        progress = appStateManager.quizProgress()
-        errorMessage = appStateManager.lastError || ""
+        question = appStateManager.currentQuizQuestion();
+        progress = appStateManager.quizProgress();
+        errorMessage = appStateManager.lastError || "";
     }
 
     function submitAnswer(answer) {
-        question = appStateManager.submitQuizAnswer(answer)
-        progress = appStateManager.quizProgress()
-        errorMessage = appStateManager.lastError || ""
+        question = appStateManager.submitQuizAnswer(answer);
+        progress = appStateManager.quizProgress();
+        errorMessage = appStateManager.lastError || "";
     }
 
     function continueQuiz() {
-        appStateManager.nextQuizQuestion()
-        refreshQuizState()
+        appStateManager.nextQuizQuestion();
+        refreshQuizState();
     }
 
     function exitQuiz() {
-        appStateManager.resetQuiz()
-        appStateManager.goQuizHomePage()
+        appStateManager.resetQuiz();
+        appStateManager.goQuizHomePage();
     }
 
-    function articleAccent(article) {
+    function articleName(article) {
         if (article === "der") {
-            return root.blue
+            return "Masculine article";
         }
 
         if (article === "die") {
-            return root.pink
+            return "Feminine article";
         }
 
         if (article === "das") {
-            return root.green
+            return "Neuter article";
         }
 
-        return root.textMuted
+        return "German article";
     }
 
     function optionBackground(article) {
         if (Boolean(question.isAnswered) && question.answer === article) {
-            return Qt.rgba(articleAccent(article).r, articleAccent(article).g, articleAccent(article).b, 0.14)
+            return greenSoft;
         }
 
         if (Boolean(question.isAnswered) && question.selectedAnswer === article && question.answer !== article) {
-            return root.redSoft
+            return redSoft;
         }
 
-        return root.cardBg
+        return optionBg;
     }
 
     function optionBorder(article) {
         if (Boolean(question.isAnswered) && question.answer === article) {
-            return articleAccent(article)
+            return green;
         }
 
         if (Boolean(question.isAnswered) && question.selectedAnswer === article && question.answer !== article) {
-            return root.red
+            return red;
         }
 
-        return root.line
+        return "transparent";
     }
 
-    function optionTextColor(article) {
-        if (Boolean(question.isAnswered) && question.selectedAnswer === article && question.answer !== article) {
-            return root.red
+    function labelBackground(article) {
+        if (Boolean(question.isAnswered) && question.answer === article) {
+            return green;
         }
 
-        return articleAccent(article)
+        if (Boolean(question.isAnswered) && question.selectedAnswer === article && question.answer !== article) {
+            return red;
+        }
+
+        return "#ffffff";
+    }
+
+    function labelColor(article) {
+        if (Boolean(question.isAnswered) && (question.answer === article || question.selectedAnswer === article)) {
+            return "white";
+        }
+
+        return accentText;
+    }
+
+    function hintText(article) {
+        if (!Boolean(question.isAnswered)) {
+            return articleName(article);
+        }
+
+        if (question.answer === article) {
+            return "Correct answer";
+        }
+
+        if (question.selectedAnswer === article) {
+            return "Selected answer";
+        }
+
+        return "Not selected";
     }
 
     Item {
         Layout.fillWidth: true
-        Layout.preferredHeight: 58
+        Layout.preferredHeight: 84
 
-        Text {
+        Column {
             anchors {
                 left: parent.left
                 verticalCenter: parent.verticalCenter
             }
-            text: "Exit"
-            color: root.red
-            font.pixelSize: 15
-            font.weight: Font.Bold
+            spacing: 3
 
-            MouseArea {
-                anchors.fill: parent
-                anchors.margins: -10
-                onClicked: root.exitQuiz()
+            Text {
+                text: "Article Quiz"
+                color: root.textMain
+                font.pixelSize: 24
+                font.weight: Font.ExtraBold
+            }
+
+            Text {
+                text: "German noun articles"
+                color: root.textMuted
+                font.pixelSize: 13
             }
         }
 
         Text {
-            anchors.centerIn: parent
-            text: "Article Quiz"
-            color: root.textMain
-            font.pixelSize: 17
-            font.weight: Font.ExtraBold
+            anchors {
+                right: parent.right
+                verticalCenter: parent.verticalCenter
+            }
+            text: "Quit"
+            color: root.red
+            font.pixelSize: 15
+            font.weight: Font.DemiBold
+
+            MouseArea {
+                anchors.fill: parent
+                anchors.margins: -12
+                onClicked: root.exitQuiz()
+            }
+        }
+
+        Rectangle {
+            anchors {
+                left: parent.left
+                right: parent.right
+                bottom: parent.bottom
+            }
+            height: 1
+            color: "#ececec"
         }
     }
 
     ColumnLayout {
         Layout.fillWidth: true
-        spacing: 16
-
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 10
-            radius: 5
-            color: root.line
-
-            Rectangle {
-                anchors {
-                    left: parent.left
-                    top: parent.top
-                    bottom: parent.bottom
-                }
-                width: parent.width * Math.max(0, Math.min(1, Number(root.progress.percent || 0) / 100))
-                radius: 5
-                color: root.green
-            }
-        }
+        Layout.topMargin: 22
+        spacing: 22
 
         RowLayout {
             Layout.fillWidth: true
+            spacing: 12
 
             Text {
                 Layout.fillWidth: true
                 text: "Question " + (root.progress.number || 0) + " of " + (root.progress.total || 0)
-                color: root.textMuted
+                color: "#666666"
                 font.pixelSize: 14
-                font.weight: Font.Bold
+                font.weight: Font.DemiBold
             }
 
             Text {
@@ -175,68 +216,81 @@ DLAppPage {
 
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 220
-            radius: 8
-            color: root.cardBg
-            border.color: root.line
-            border.width: 1
+            Layout.preferredHeight: 9
+            radius: 5
+            color: root.accentTrack
+            clip: true
 
-            Column {
+            Rectangle {
                 anchors {
-                    fill: parent
-                    margins: 18
+                    left: parent.left
+                    top: parent.top
+                    bottom: parent.bottom
                 }
-                spacing: 14
+                width: parent.width * Math.max(0, Math.min(1, Number(root.progress.percent || 0) / 100))
+                radius: 5
+                color: root.accent
+            }
+        }
 
-                Text {
-                    width: parent.width
-                    text: "Choose the correct German article"
-                    color: root.textMuted
-                    font.pixelSize: 14
-                    font.weight: Font.DemiBold
-                    elide: Text.ElideRight
-                }
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.preferredHeight: Math.max(170, questionContent.implicitHeight + 48)
+            radius: 22
+            color: root.accentSoft
 
-                RowLayout {
-                    width: parent.width
-                    spacing: 10
+            ColumnLayout {
+                id: questionContent
 
-                    Rectangle {
-                        Layout.preferredWidth: 76
-                        Layout.preferredHeight: 54
-                        radius: 8
-                        color: root.fieldBg
-                        border.color: root.line
-                        border.width: 1
+                anchors.centerIn: parent
+                width: parent.width - 36
+                spacing: 12
 
-                        Text {
-                            anchors.centerIn: parent
-                            text: "___"
-                            color: Boolean(root.question.isAnswered) ? root.articleAccent(root.question.answer || "") : root.textMuted
-                            font.pixelSize: 26
-                            font.weight: Font.ExtraBold
-                        }
-                    }
+                Rectangle {
+                    Layout.alignment: Qt.AlignHCenter
+                    Layout.preferredHeight: 28
+                    Layout.preferredWidth: 118
+                    radius: 14
+                    color: "#ffffff"
 
                     Text {
-                        Layout.fillWidth: true
-                        text: root.question.prompt || ""
-                        color: root.textMain
-                        font.pixelSize: 36
+                        anchors.centerIn: parent
+                        text: "Article Practice"
+                        color: root.accentText
+                        font.pixelSize: 12
                         font.weight: Font.ExtraBold
-                        wrapMode: Text.WordWrap
-                        maximumLineCount: 2
-                        elide: Text.ElideRight
                     }
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    text: "Select the correct article:"
+                    color: "#666666"
+                    horizontalAlignment: Text.AlignHCenter
+                    font.pixelSize: 14
+                    font.weight: Font.DemiBold
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    text: root.question.prompt || ""
+                    color: root.textMain
+                    horizontalAlignment: Text.AlignHCenter
+                    font.pixelSize: 34
+                    font.weight: Font.ExtraBold
+                    wrapMode: Text.WordWrap
+                    maximumLineCount: 2
+                    elide: Text.ElideRight
+                    lineHeight: 0.94
                 }
 
                 Text {
                     visible: (root.question.nativeTranslation || "").length > 0
-                    width: parent.width
+                    Layout.fillWidth: true
                     text: root.question.nativeTranslation || ""
-                    color: root.textMuted
+                    color: "#666666"
+                    horizontalAlignment: Text.AlignHCenter
                     font.pixelSize: 15
-                    font.weight: Font.DemiBold
                     wrapMode: Text.WordWrap
                     maximumLineCount: 2
                     elide: Text.ElideRight
@@ -254,9 +308,9 @@ DLAppPage {
             font.weight: Font.DemiBold
         }
 
-        RowLayout {
+        ColumnLayout {
             Layout.fillWidth: true
-            spacing: 10
+            spacing: 12
 
             Repeater {
                 model: root.question.options || []
@@ -267,26 +321,62 @@ DLAppPage {
                     required property string modelData
 
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 86
+                    Layout.preferredHeight: 64
                     text: modelData
                     enabled: !Boolean(root.question.isAnswered)
-                    font.pixelSize: 22
-                    font.weight: Font.ExtraBold
                     onClicked: root.submitAnswer(modelData)
 
-                    contentItem: Text {
-                        text: articleButton.text
-                        color: root.optionTextColor(articleButton.modelData)
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                        font: articleButton.font
+                    opacity: Boolean(root.question.isAnswered) && root.question.answer !== modelData && root.question.selectedAnswer !== modelData ? 0.55 : 1.0
+
+                    contentItem: RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: 14
+                        anchors.rightMargin: 14
+                        spacing: 12
+
+                        Rectangle {
+                            Layout.preferredWidth: 48
+                            Layout.preferredHeight: 38
+                            radius: 12
+                            color: root.labelBackground(articleButton.modelData)
+
+                            Text {
+                                anchors.centerIn: parent
+                                text: articleButton.modelData
+                                color: root.labelColor(articleButton.modelData)
+                                font.pixelSize: 18
+                                font.weight: Font.ExtraBold
+                            }
+                        }
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 3
+
+                            Text {
+                                Layout.fillWidth: true
+                                text: articleButton.modelData + " " + (root.question.prompt || "")
+                                color: root.textMain
+                                font.pixelSize: 16
+                                font.weight: Font.Bold
+                                elide: Text.ElideRight
+                            }
+
+                            Text {
+                                Layout.fillWidth: true
+                                text: root.hintText(articleButton.modelData)
+                                color: "#777777"
+                                font.pixelSize: 13
+                                elide: Text.ElideRight
+                            }
+                        }
                     }
 
                     background: Rectangle {
-                        radius: 8
+                        radius: 18
                         color: root.optionBackground(articleButton.modelData)
                         border.color: root.optionBorder(articleButton.modelData)
-                        border.width: 1
+                        border.width: Boolean(root.question.isAnswered) ? 2 : 0
                     }
                 }
             }
@@ -295,44 +385,48 @@ DLAppPage {
         Rectangle {
             visible: Boolean(root.question.isAnswered)
             Layout.fillWidth: true
-            Layout.preferredHeight: 58
-            radius: 8
+            Layout.preferredHeight: Math.max(52, feedbackText.implicitHeight + 28)
+            radius: 16
             color: root.question.isCorrect ? root.greenSoft : root.redSoft
-            border.color: root.question.isCorrect ? root.green : root.red
-            border.width: 1
 
             Text {
+                id: feedbackText
+
                 anchors.centerIn: parent
-                width: parent.width - 24
+                width: parent.width - 28
                 text: root.question.feedback || ""
-                color: root.question.isCorrect ? root.green : root.red
+                color: root.question.isCorrect ? root.greenText : root.red
                 horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.WordWrap
                 font.pixelSize: 15
-                font.weight: Font.ExtraBold
-                elide: Text.ElideRight
+                font.weight: Font.DemiBold
+                lineHeight: 1.12
             }
         }
 
         Button {
+            id: continueButton
+
             visible: Boolean(root.question.isAnswered)
             Layout.fillWidth: true
-            Layout.preferredHeight: 52
-            text: (root.progress.number || 0) >= (root.progress.total || 0) ? "Show Results" : "Next Article"
-            font.pixelSize: 15
-            font.weight: Font.ExtraBold
+            Layout.preferredHeight: 56
+            text: (root.progress.number || 0) >= (root.progress.total || 0) ? "Show Results" : "Next Question"
+            font.pixelSize: 17
+            font.weight: Font.Bold
             onClicked: root.continueQuiz()
 
             contentItem: Text {
-                text: parent.text
+                text: continueButton.text
                 color: "white"
                 horizontalAlignment: Text.AlignHCenter
                 verticalAlignment: Text.AlignVCenter
-                font: parent.font
+                font: continueButton.font
+                elide: Text.ElideRight
             }
 
             background: Rectangle {
-                radius: 8
-                color: root.green
+                radius: 16
+                color: root.accent
             }
         }
     }

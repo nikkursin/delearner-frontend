@@ -17,6 +17,7 @@ Page {
     property int pageTopPadding: 18
     property int pageBottomPadding: 6
     property int navigationBarHeight: 64
+    property color pageBackground: root.bg
 
     readonly property real safeAreaTop: root.safeAreaInset("top")
     readonly property real safeAreaBottom: root.safeAreaInset("bottom")
@@ -29,7 +30,7 @@ Page {
     readonly property color blue: "#337fe6"
 
     background: Rectangle {
-        color: root.bg
+        color: root.pageBackground
     }
 
     function safeAreaInset(edge) {
