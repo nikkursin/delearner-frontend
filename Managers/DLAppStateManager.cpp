@@ -56,6 +56,7 @@ void DLAppStateManager::goWordDetails() {
 }
 
 void DLAppStateManager::goAddEditWordPage() {
+    setSelectedWordId(-1);
     navigateTo(AddEditWordPage);
 }
 
