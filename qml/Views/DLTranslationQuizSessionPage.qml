@@ -12,6 +12,8 @@ DLAppPage {
     showHeader: false
     activeTab: "quiz"
     pageBackground: "#ffffff"
+    pagePadding: 20
+    pageTopPadding: 0
     pageBottomPadding: 24
 
     property var question: ({})
@@ -24,9 +26,9 @@ DLAppPage {
     readonly property color optionBg: "#f5f5f7"
     readonly property color green: "#34c759"
     readonly property color greenText: "#168a35"
-    readonly property color greenSoft: Qt.rgba(52 / 255, 199 / 255, 89 / 255, 0.13)
+    readonly property color greenSoft: Qt.rgba(52 / 255, 199 / 255, 89 / 255, 0.15)
     readonly property color red: "#ff3b30"
-    readonly property color redSoft: Qt.rgba(255 / 255, 59 / 255, 48 / 255, 0.10)
+    readonly property color redSoft: Qt.rgba(255 / 255, 59 / 255, 48 / 255, 0.13)
 
     Component.onCompleted: refreshQuizState()
 
@@ -69,7 +71,7 @@ DLAppPage {
             return red;
         }
 
-        return "#222222";
+        return root.textMain;
     }
 
     function optionBackground(option) {
@@ -96,9 +98,89 @@ DLAppPage {
         return "transparent";
     }
 
-    Item {
+    function progressRatio() {
+        return Math.max(0, Math.min(1, Number(root.progress.percent || 0) / 100));
+    }
+
+    QuizHeader {
+        titleText: "Translation Quiz"
+        subtitleText: "Select the native-language translation"
+    }
+
+    ColumnLayout {
         Layout.fillWidth: true
-        Layout.preferredHeight: 84
+        Layout.topMargin: 24
+        spacing: 0
+
+        ProgressBlock {
+            accentColor: root.accent
+            trackColor: root.accentTrack
+        }
+
+        QuestionCard {
+            Layout.topMargin: 20
+            promptText: "Select the native-language translation"
+            wordText: root.question.prompt || ""
+            cardColor: root.accentSoft
+        }
+
+        Text {
+            visible: root.errorMessage.length > 0
+            Layout.fillWidth: true
+            Layout.topMargin: 14
+            text: root.errorMessage
+            color: root.red
+            wrapMode: Text.WordWrap
+            horizontalAlignment: Text.AlignHCenter
+            font.pixelSize: 14
+            font.weight: Font.DemiBold
+        }
+
+        ColumnLayout {
+            Layout.fillWidth: true
+            Layout.topMargin: 18
+            spacing: 10
+
+            Repeater {
+                model: root.question.options || []
+
+                delegate: AnswerRow {
+                    required property string modelData
+
+                    text: modelData
+                    enabled: !Boolean(root.question.isAnswered)
+                    textColor: root.optionTextColor(modelData)
+                    fillColor: root.optionBackground(modelData)
+                    outlineColor: root.optionBorder(modelData)
+                    outlined: Boolean(root.question.isAnswered) && (root.question.answer === modelData || root.question.selectedAnswer === modelData)
+                    onClicked: root.submitAnswer(modelData)
+                }
+            }
+        }
+
+        FeedbackBlock {
+            visible: Boolean(root.question.isAnswered)
+            Layout.topMargin: 18
+            correct: Boolean(root.question.isCorrect)
+            message: root.question.feedback || ""
+        }
+
+        ContinueButton {
+            visible: Boolean(root.question.isAnswered)
+            Layout.topMargin: 16
+            text: (root.progress.number || 0) >= (root.progress.total || 0) ? "Show Results" : "Next Question"
+            onClicked: root.continueQuiz()
+        }
+    }
+
+    component QuizHeader: Item {
+        id: quizHeader
+
+        property string titleText: ""
+        property string subtitleText: ""
+
+        Layout.fillWidth: true
+        Layout.preferredHeight: 70
 
         Button {
             id: backButton
@@ -109,7 +191,6 @@ DLAppPage {
             }
             width: 44
             height: 44
-            text: ""
             onClicked: root.exitQuiz()
 
             contentItem: Item {
@@ -133,22 +214,29 @@ DLAppPage {
         Column {
             anchors {
                 left: backButton.right
+                right: parent.right
                 verticalCenter: parent.verticalCenter
                 leftMargin: 12
             }
-            spacing: 3
+            spacing: 2
 
             Text {
-                text: "Translation Quiz"
+                width: parent.width
+                text: quizHeader.titleText
                 color: root.textMain
                 font.pixelSize: 24
                 font.weight: Font.ExtraBold
+                elide: Text.ElideRight
             }
 
             Text {
-                text: "German ↔ Native Language"
+                width: parent.width
+                text: quizHeader.subtitleText
                 color: root.textMuted
                 font.pixelSize: 13
+                wrapMode: Text.WordWrap
+                maximumLineCount: 1
+                elide: Text.ElideRight
             }
         }
 
@@ -163,36 +251,20 @@ DLAppPage {
         }
     }
 
-    ColumnLayout {
+    component ProgressBlock: ColumnLayout {
+        id: progressBlock
+
+        property color accentColor: root.accent
+        property color trackColor: root.accentTrack
+
         Layout.fillWidth: true
-        Layout.topMargin: 22
-        spacing: 22
-
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: 12
-
-            Text {
-                Layout.fillWidth: true
-                text: "Question " + (root.progress.number || 0) + " of " + (root.progress.total || 0)
-                color: "#666666"
-                font.pixelSize: 14
-                font.weight: Font.DemiBold
-            }
-
-            Text {
-                text: (root.progress.correct || 0) + " correct"
-                color: root.greenText
-                font.pixelSize: 14
-                font.weight: Font.Bold
-            }
-        }
+        spacing: 10
 
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 9
-            radius: 5
-            color: root.accentTrack
+            Layout.preferredHeight: 8
+            radius: 4
+            color: progressBlock.trackColor
             clip: true
 
             Rectangle {
@@ -201,144 +273,98 @@ DLAppPage {
                     top: parent.top
                     bottom: parent.bottom
                 }
-                width: parent.width * Math.max(0, Math.min(1, Number(root.progress.percent || 0) / 100))
-                radius: 5
-                color: root.accent
-            }
-        }
-
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: Math.max(178, questionContent.implicitHeight + 48)
-            radius: 22
-            color: root.accentSoft
-
-            ColumnLayout {
-                id: questionContent
-
-                anchors.centerIn: parent
-                width: parent.width - 36
-                spacing: 12
-
-                Rectangle {
-                    Layout.alignment: Qt.AlignHCenter
-                    Layout.preferredHeight: 28
-                    Layout.preferredWidth: 108
-                    radius: 14
-                    color: "#ffffff"
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: "DE → Native"
-                        color: root.accent
-                        font.pixelSize: 12
-                        font.weight: Font.ExtraBold
-                    }
-                }
-
-                Text {
-                    Layout.fillWidth: true
-                    text: "Select the native-language translation:"
-                    color: "#666666"
-                    horizontalAlignment: Text.AlignHCenter
-                    font.pixelSize: 14
-                    font.weight: Font.DemiBold
-                    wrapMode: Text.WordWrap
-                }
-
-                Text {
-                    Layout.fillWidth: true
-                    text: root.question.prompt || ""
-                    color: root.textMain
-                    horizontalAlignment: Text.AlignHCenter
-                    font.pixelSize: 34
-                    font.weight: Font.ExtraBold
-                    wrapMode: Text.WordWrap
-                    maximumLineCount: 2
-                    elide: Text.ElideRight
-                    lineHeight: 0.94
-                }
-
-                Text {
-                    visible: (root.question.exampleDe || "").length > 0
-                    Layout.fillWidth: true
-                    text: root.question.exampleDe || ""
-                    color: "#666666"
-                    horizontalAlignment: Text.AlignHCenter
-                    font.pixelSize: 15
-                    font.italic: true
-                    wrapMode: Text.WordWrap
-                    maximumLineCount: 2
-                    elide: Text.ElideRight
-                    lineHeight: 1.12
-                }
+                width: parent.width * root.progressRatio()
+                radius: 4
+                color: progressBlock.accentColor
             }
         }
 
         Text {
-            visible: root.errorMessage.length > 0
             Layout.fillWidth: true
-            text: root.errorMessage
-            color: root.red
-            wrapMode: Text.WordWrap
-            font.pixelSize: 14
-            font.weight: Font.DemiBold
+            text: "QUESTION " + (root.progress.number || 0) + " OF " + (root.progress.total || 0)
+            color: root.textMuted
+            horizontalAlignment: Text.AlignHCenter
+            font.pixelSize: 13
+            font.weight: Font.Bold
         }
+    }
+
+    component QuestionCard: Rectangle {
+        id: questionCard
+
+        property string promptText: ""
+        property string wordText: ""
+        property color cardColor: root.accentSoft
+
+        Layout.fillWidth: true
+        Layout.preferredHeight: Math.max(118, questionContent.implicitHeight + 34)
+        radius: 18
+        color: questionCard.cardColor
 
         ColumnLayout {
-            Layout.fillWidth: true
-            spacing: 12
+            id: questionContent
 
-            Repeater {
-                model: root.question.options || []
+            anchors.centerIn: parent
+            width: parent.width - 36
+            spacing: 10
 
-                delegate: Button {
-                    id: optionButton
+            Text {
+                Layout.fillWidth: true
+                text: questionCard.promptText
+                color: root.textMuted
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.WordWrap
+                font.pixelSize: 14
+                font.weight: Font.DemiBold
+            }
 
-                    required property string modelData
-
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 58
-                    text: modelData
-                    enabled: !Boolean(root.question.isAnswered)
-                    font.pixelSize: 16
-                    font.weight: Font.DemiBold
-                    onClicked: root.submitAnswer(modelData)
-
-                    contentItem: Text {
-                        anchors.fill: parent
-                        leftPadding: 14
-                        rightPadding: 14
-                        text: optionButton.text
-                        color: root.optionTextColor(optionButton.modelData)
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                        font: optionButton.font
-                        wrapMode: Text.WordWrap
-                        maximumLineCount: 2
-                        elide: Text.ElideRight
-                    }
-
-                    background: Rectangle {
-                        radius: 16
-                        color: root.optionBackground(optionButton.modelData)
-                        border.color: root.optionBorder(optionButton.modelData)
-                        border.width: Boolean(root.question.isAnswered) ? 2 : 0
-                    }
-                }
+            Text {
+                Layout.fillWidth: true
+                text: questionCard.wordText
+                color: root.textMain
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.WordWrap
+                maximumLineCount: 2
+                elide: Text.ElideRight
+                lineHeight: 0.94
+                font.pixelSize: 32
+                font.weight: Font.ExtraBold
             }
         }
+    }
 
-        FeedbackBlock {
-            visible: Boolean(root.question.isAnswered)
-            correct: Boolean(root.question.isCorrect)
-            message: root.question.feedback || ""
+    component AnswerRow: Button {
+        id: optionButton
+
+        property color textColor: root.textMain
+        property color fillColor: root.optionBg
+        property color outlineColor: "transparent"
+        property bool outlined: false
+
+        Layout.fillWidth: true
+        Layout.preferredHeight: 54
+        font.pixelSize: 16
+        font.weight: Font.DemiBold
+
+        contentItem: Text {
+            anchors.fill: parent
+            leftPadding: 16
+            rightPadding: 16
+            text: optionButton.text
+            color: optionButton.textColor
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+            wrapMode: Text.WordWrap
+            maximumLineCount: 2
+            elide: Text.ElideRight
+            font: optionButton.font
         }
 
-        ContinueButton {
-            visible: Boolean(root.question.isAnswered)
-            text: (root.progress.number || 0) >= (root.progress.total || 0) ? "Show Results" : "Next Question"
-            onClicked: root.continueQuiz()
+        background: Rectangle {
+            radius: 16
+            color: optionButton.fillColor
+            border.color: optionButton.outlineColor
+            border.width: optionButton.outlined ? 2 : 0
         }
     }
 
@@ -347,7 +373,7 @@ DLAppPage {
         property string message: ""
 
         Layout.fillWidth: true
-        Layout.preferredHeight: Math.max(52, feedbackText.implicitHeight + 28)
+        Layout.preferredHeight: Math.max(48, feedbackText.implicitHeight + 22)
         radius: 16
         color: correct ? root.greenSoft : root.redSoft
 
@@ -362,7 +388,6 @@ DLAppPage {
             wrapMode: Text.WordWrap
             font.pixelSize: 15
             font.weight: Font.DemiBold
-            lineHeight: 1.12
         }
     }
 
@@ -370,7 +395,7 @@ DLAppPage {
         id: continueButton
 
         Layout.fillWidth: true
-        Layout.preferredHeight: 56
+        Layout.preferredHeight: 54
         font.pixelSize: 17
         font.weight: Font.Bold
 

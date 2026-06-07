@@ -277,18 +277,7 @@ DLAppPage {
             iconText: "DB"
         }
     }
-
-    SettingsSectionCard {
-        title: "Preferences"
-
-        SettingsRow {
-            label: "Native language"
-            value: "Not configured"
-            iconText: "A"
-            enabled: false
-        }
-    }
-
+    
     SettingsSectionCard {
         title: "Backup / Import / Export"
 

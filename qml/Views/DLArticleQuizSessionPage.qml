@@ -12,6 +12,8 @@ DLAppPage {
     showHeader: false
     activeTab: "quiz"
     pageBackground: "#ffffff"
+    pagePadding: 20
+    pageTopPadding: 0
     pageBottomPadding: 24
 
     property var question: ({})
@@ -22,12 +24,15 @@ DLAppPage {
     readonly property color accentText: "#c96f00"
     readonly property color accentSoft: Qt.rgba(255 / 255, 149 / 255, 0 / 255, 0.12)
     readonly property color accentTrack: Qt.rgba(255 / 255, 149 / 255, 0 / 255, 0.18)
-    readonly property color optionBg: "#f5f5f7"
+    readonly property color optionBg: root.cardBg
+    readonly property color optionBorderDefault: "#e3e3e8"
+    readonly property color neutralBg: "#fff7f8"
+    readonly property color neutralBorder: "#f4b6c3"
     readonly property color green: "#34c759"
+    readonly property color greenSoft: Qt.rgba(52 / 255, 199 / 255, 89 / 255, 0.15)
     readonly property color greenText: "#168a35"
-    readonly property color greenSoft: Qt.rgba(52 / 255, 199 / 255, 89 / 255, 0.13)
     readonly property color red: "#ff3b30"
-    readonly property color redSoft: Qt.rgba(255 / 255, 59 / 255, 48 / 255, 0.10)
+    readonly property color redSoft: Qt.rgba(255 / 255, 59 / 255, 48 / 255, 0.13)
 
     Component.onCompleted: refreshQuizState()
 
@@ -61,23 +66,28 @@ DLAppPage {
         appStateManager.goQuizHomePage();
     }
 
-    function articleName(article) {
-        if (article === "der") {
-            return "Masculine article";
-        }
-
-        if (article === "die") {
-            return "Feminine article";
-        }
-
-        if (article === "das") {
-            return "Neuter article";
-        }
-
-        return "German article";
+    function nounWithoutArticle(value) {
+        var text = String(value || "").trim();
+        return text.replace(/^(der|die|das)\s+/i, "");
     }
 
-    function optionBackground(article) {
+    function articleTextColor(article) {
+        if (Boolean(question.isAnswered) && question.answer === article) {
+            return green;
+        }
+
+        if (Boolean(question.isAnswered) && question.selectedAnswer === article && question.answer !== article) {
+            return red;
+        }
+
+        if (Boolean(question.isAnswered)) {
+            return neutralBorder;
+        }
+
+        return root.textMain;
+    }
+
+    function articleBackground(article) {
         if (Boolean(question.isAnswered) && question.answer === article) {
             return greenSoft;
         }
@@ -86,10 +96,14 @@ DLAppPage {
             return redSoft;
         }
 
+        if (Boolean(question.isAnswered)) {
+            return neutralBg;
+        }
+
         return optionBg;
     }
 
-    function optionBorder(article) {
+    function articleBorder(article) {
         if (Boolean(question.isAnswered) && question.answer === article) {
             return green;
         }
@@ -98,48 +112,109 @@ DLAppPage {
             return red;
         }
 
-        return "transparent";
-    }
-
-    function labelBackground(article) {
-        if (Boolean(question.isAnswered) && question.answer === article) {
-            return green;
+        if (Boolean(question.isAnswered)) {
+            return neutralBorder;
         }
 
-        if (Boolean(question.isAnswered) && question.selectedAnswer === article && question.answer !== article) {
-            return red;
-        }
-
-        return "#ffffff";
+        return optionBorderDefault;
     }
 
-    function labelColor(article) {
-        if (Boolean(question.isAnswered) && (question.answer === article || question.selectedAnswer === article)) {
-            return "white";
-        }
-
-        return accentText;
-    }
-
-    function hintText(article) {
+    function articleOpacity(article) {
         if (!Boolean(question.isAnswered)) {
-            return articleName(article);
+            return 1.0;
         }
 
-        if (question.answer === article) {
-            return "Correct answer";
-        }
-
-        if (question.selectedAnswer === article) {
-            return "Selected answer";
-        }
-
-        return "Not selected";
+        return question.answer === article || question.selectedAnswer === article ? 1.0 : 0.75;
     }
 
-    Item {
+    function progressRatio() {
+        return Math.max(0, Math.min(1, Number(root.progress.percent || 0) / 100));
+    }
+
+    QuizHeader {
+        titleText: "Article Quiz"
+        subtitleText: "Select the correct article"
+    }
+
+    ColumnLayout {
         Layout.fillWidth: true
-        Layout.preferredHeight: 84
+        Layout.topMargin: 24
+        spacing: 0
+
+        ProgressBlock {
+            accentColor: root.accent
+            trackColor: root.accentTrack
+        }
+
+        QuestionCard {
+            Layout.topMargin: 20
+            promptText: "Select the correct article"
+            wordText: root.nounWithoutArticle(root.question.prompt || "")
+            cardColor: root.accentSoft
+        }
+
+        Text {
+            visible: root.errorMessage.length > 0
+            Layout.fillWidth: true
+            Layout.topMargin: 14
+            text: root.errorMessage
+            color: root.red
+            wrapMode: Text.WordWrap
+            horizontalAlignment: Text.AlignHCenter
+            font.pixelSize: 14
+            font.weight: Font.DemiBold
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            Layout.topMargin: 22
+            spacing: 12
+
+            Repeater {
+                model: root.question.options || ["der", "die", "das"]
+
+                delegate: ArticleOption {
+                    required property string modelData
+
+                    text: modelData
+                    enabled: !Boolean(root.question.isAnswered)
+                    textColor: root.articleTextColor(modelData)
+                    fillColor: root.articleBackground(modelData)
+                    outlineColor: root.articleBorder(modelData)
+                    opacity: root.articleOpacity(modelData)
+                    onClicked: root.submitAnswer(modelData)
+                }
+            }
+        }
+
+        Text {
+            visible: Boolean(root.question.isAnswered)
+            Layout.fillWidth: true
+            Layout.topMargin: 20
+            text: root.question.feedback || ""
+            color: root.question.isCorrect ? root.greenText : root.red
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.WordWrap
+            font.pixelSize: 15
+            font.weight: Font.DemiBold
+        }
+
+        ContinueButton {
+            visible: Boolean(root.question.isAnswered)
+            Layout.topMargin: 18
+            text: (root.progress.number || 0) >= (root.progress.total || 0) ? "Show Results" : "Next Question"
+            onClicked: root.continueQuiz()
+        }
+    }
+
+    component QuizHeader: Item {
+        id: quizHeader
+
+        property string titleText: ""
+        property string subtitleText: ""
+
+        Layout.fillWidth: true
+        Layout.preferredHeight: 70
 
         Button {
             id: backButton
@@ -150,7 +225,6 @@ DLAppPage {
             }
             width: 44
             height: 44
-            text: ""
             onClicked: root.exitQuiz()
 
             contentItem: Item {
@@ -174,22 +248,29 @@ DLAppPage {
         Column {
             anchors {
                 left: backButton.right
+                right: parent.right
                 verticalCenter: parent.verticalCenter
                 leftMargin: 12
             }
-            spacing: 3
+            spacing: 2
 
             Text {
-                text: "Article Quiz"
+                width: parent.width
+                text: quizHeader.titleText
                 color: root.textMain
                 font.pixelSize: 24
                 font.weight: Font.ExtraBold
+                elide: Text.ElideRight
             }
 
             Text {
-                text: "German noun articles"
+                width: parent.width
+                text: quizHeader.subtitleText
                 color: root.textMuted
                 font.pixelSize: 13
+                wrapMode: Text.WordWrap
+                maximumLineCount: 1
+                elide: Text.ElideRight
             }
         }
 
@@ -204,36 +285,20 @@ DLAppPage {
         }
     }
 
-    ColumnLayout {
+    component ProgressBlock: ColumnLayout {
+        id: progressBlock
+
+        property color accentColor: root.accent
+        property color trackColor: root.accentTrack
+
         Layout.fillWidth: true
-        Layout.topMargin: 22
-        spacing: 22
-
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: 12
-
-            Text {
-                Layout.fillWidth: true
-                text: "Question " + (root.progress.number || 0) + " of " + (root.progress.total || 0)
-                color: "#666666"
-                font.pixelSize: 14
-                font.weight: Font.DemiBold
-            }
-
-            Text {
-                text: (root.progress.wrong || 0) + " wrong"
-                color: root.progress.wrong > 0 ? root.red : root.textMuted
-                font.pixelSize: 14
-                font.weight: Font.Bold
-            }
-        }
+        spacing: 10
 
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 9
-            radius: 5
-            color: root.accentTrack
+            Layout.preferredHeight: 8
+            radius: 4
+            color: progressBlock.trackColor
             clip: true
 
             Rectangle {
@@ -242,207 +307,115 @@ DLAppPage {
                     top: parent.top
                     bottom: parent.bottom
                 }
-                width: parent.width * Math.max(0, Math.min(1, Number(root.progress.percent || 0) / 100))
-                radius: 5
-                color: root.accent
-            }
-        }
-
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: Math.max(170, questionContent.implicitHeight + 48)
-            radius: 22
-            color: root.accentSoft
-
-            ColumnLayout {
-                id: questionContent
-
-                anchors.centerIn: parent
-                width: parent.width - 36
-                spacing: 12
-
-                Rectangle {
-                    Layout.alignment: Qt.AlignHCenter
-                    Layout.preferredHeight: 28
-                    Layout.preferredWidth: 118
-                    radius: 14
-                    color: "#ffffff"
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: "Article Practice"
-                        color: root.accentText
-                        font.pixelSize: 12
-                        font.weight: Font.ExtraBold
-                    }
-                }
-
-                Text {
-                    Layout.fillWidth: true
-                    text: "Select the correct article:"
-                    color: "#666666"
-                    horizontalAlignment: Text.AlignHCenter
-                    font.pixelSize: 14
-                    font.weight: Font.DemiBold
-                }
-
-                Text {
-                    Layout.fillWidth: true
-                    text: root.question.prompt || ""
-                    color: root.textMain
-                    horizontalAlignment: Text.AlignHCenter
-                    font.pixelSize: 34
-                    font.weight: Font.ExtraBold
-                    wrapMode: Text.WordWrap
-                    maximumLineCount: 2
-                    elide: Text.ElideRight
-                    lineHeight: 0.94
-                }
-
-                Text {
-                    visible: (root.question.nativeTranslation || "").length > 0
-                    Layout.fillWidth: true
-                    text: root.question.nativeTranslation || ""
-                    color: "#666666"
-                    horizontalAlignment: Text.AlignHCenter
-                    font.pixelSize: 15
-                    wrapMode: Text.WordWrap
-                    maximumLineCount: 2
-                    elide: Text.ElideRight
-                }
+                width: parent.width * root.progressRatio()
+                radius: 4
+                color: progressBlock.accentColor
             }
         }
 
         Text {
-            visible: root.errorMessage.length > 0
             Layout.fillWidth: true
-            text: root.errorMessage
-            color: root.red
-            wrapMode: Text.WordWrap
-            font.pixelSize: 14
-            font.weight: Font.DemiBold
+            text: "QUESTION " + (root.progress.number || 0) + " OF " + (root.progress.total || 0)
+            color: root.textMuted
+            horizontalAlignment: Text.AlignHCenter
+            font.pixelSize: 13
+            font.weight: Font.Bold
         }
+    }
+
+    component QuestionCard: Rectangle {
+        id: questionCard
+
+        property string promptText: ""
+        property string wordText: ""
+        property color cardColor: root.accentSoft
+
+        Layout.fillWidth: true
+        Layout.preferredHeight: Math.max(176, Math.min(232, root.height * 0.23), questionContent.implicitHeight + 54)
+        radius: 18
+        color: questionCard.cardColor
 
         ColumnLayout {
-            Layout.fillWidth: true
-            spacing: 12
+            id: questionContent
 
-            Repeater {
-                model: root.question.options || []
-
-                delegate: Button {
-                    id: articleButton
-
-                    required property string modelData
-
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 64
-                    text: modelData
-                    enabled: !Boolean(root.question.isAnswered)
-                    onClicked: root.submitAnswer(modelData)
-
-                    opacity: Boolean(root.question.isAnswered) && root.question.answer !== modelData && root.question.selectedAnswer !== modelData ? 0.55 : 1.0
-
-                    contentItem: RowLayout {
-                        anchors.fill: parent
-                        anchors.leftMargin: 14
-                        anchors.rightMargin: 14
-                        spacing: 12
-
-                        Rectangle {
-                            Layout.preferredWidth: 48
-                            Layout.preferredHeight: 38
-                            radius: 12
-                            color: root.labelBackground(articleButton.modelData)
-
-                            Text {
-                                anchors.centerIn: parent
-                                text: articleButton.modelData
-                                color: root.labelColor(articleButton.modelData)
-                                font.pixelSize: 18
-                                font.weight: Font.ExtraBold
-                            }
-                        }
-
-                        ColumnLayout {
-                            Layout.fillWidth: true
-                            spacing: 3
-
-                            Text {
-                                Layout.fillWidth: true
-                                text: articleButton.modelData + " " + (root.question.prompt || "")
-                                color: root.textMain
-                                font.pixelSize: 16
-                                font.weight: Font.Bold
-                                elide: Text.ElideRight
-                            }
-
-                            Text {
-                                Layout.fillWidth: true
-                                text: root.hintText(articleButton.modelData)
-                                color: "#777777"
-                                font.pixelSize: 13
-                                elide: Text.ElideRight
-                            }
-                        }
-                    }
-
-                    background: Rectangle {
-                        radius: 18
-                        color: root.optionBackground(articleButton.modelData)
-                        border.color: root.optionBorder(articleButton.modelData)
-                        border.width: Boolean(root.question.isAnswered) ? 2 : 0
-                    }
-                }
-            }
-        }
-
-        Rectangle {
-            visible: Boolean(root.question.isAnswered)
-            Layout.fillWidth: true
-            Layout.preferredHeight: Math.max(52, feedbackText.implicitHeight + 28)
-            radius: 16
-            color: root.question.isCorrect ? root.greenSoft : root.redSoft
+            anchors.centerIn: parent
+            width: parent.width - 36
+            spacing: 14
 
             Text {
-                id: feedbackText
-
-                anchors.centerIn: parent
-                width: parent.width - 28
-                text: root.question.feedback || ""
-                color: root.question.isCorrect ? root.greenText : root.red
+                Layout.fillWidth: true
+                text: questionCard.promptText
+                color: root.textMuted
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.WordWrap
                 font.pixelSize: 15
                 font.weight: Font.DemiBold
-                lineHeight: 1.12
+            }
+
+            Text {
+                Layout.fillWidth: true
+                text: questionCard.wordText
+                color: root.textMain
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.WordWrap
+                maximumLineCount: 2
+                elide: Text.ElideRight
+                lineHeight: 0.94
+                font.pixelSize: 38
+                font.weight: Font.ExtraBold
             }
         }
+    }
 
-        Button {
-            id: continueButton
+    component ArticleOption: Button {
+        id: optionButton
 
-            visible: Boolean(root.question.isAnswered)
-            Layout.fillWidth: true
-            Layout.preferredHeight: 56
-            text: (root.progress.number || 0) >= (root.progress.total || 0) ? "Show Results" : "Next Question"
-            font.pixelSize: 17
-            font.weight: Font.Bold
-            onClicked: root.continueQuiz()
+        property color textColor: root.textMain
+        property color fillColor: root.optionBg
+        property color outlineColor: "transparent"
 
-            contentItem: Text {
-                text: continueButton.text
-                color: "white"
-                horizontalAlignment: Text.AlignHCenter
-                verticalAlignment: Text.AlignVCenter
-                font: continueButton.font
-                elide: Text.ElideRight
-            }
+        Layout.fillWidth: true
+        Layout.preferredHeight: 72
+        font.pixelSize: 23
+        font.weight: Font.ExtraBold
 
-            background: Rectangle {
-                radius: 16
-                color: root.accent
-            }
+        contentItem: Text {
+            text: optionButton.text
+            color: optionButton.textColor
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+            font: optionButton.font
+            elide: Text.ElideRight
+        }
+
+        background: Rectangle {
+            radius: 16
+            color: optionButton.fillColor
+            border.color: optionButton.outlineColor
+            border.width: Boolean(root.question.isAnswered) ? 2 : 1
+        }
+    }
+
+    component ContinueButton: Button {
+        id: continueButton
+
+        Layout.fillWidth: true
+        Layout.preferredHeight: 54
+        font.pixelSize: 17
+        font.weight: Font.Bold
+
+        contentItem: Text {
+            text: continueButton.text
+            color: "white"
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+            font: continueButton.font
+            elide: Text.ElideRight
+        }
+
+        background: Rectangle {
+            radius: 16
+            color: root.accent
         }
     }
 }
