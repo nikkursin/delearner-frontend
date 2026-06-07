@@ -33,6 +33,7 @@ public:
     void closeDatabase();
 
     bool createTablesIfNeeded();
+    bool migrateDatabaseIfNeeded();
     bool createIndexesIfNeeded();
 
     QString lastError() const;
@@ -55,7 +56,14 @@ public:
                    const QString& nativeTranslation,
                    const QString& examplePhraseDe = QString(),
                    const QString& examplePhraseNative = QString(),
-                   int groupId = -1);
+                   int groupId = -1,
+                   const QString& syncId = QString(),
+                   const QString& pluralForm = QString(),
+                   const QString& praeteritumForm = QString(),
+                   const QString& partizipIIForm = QString(),
+                   const QString& positiveForm = QString(),
+                   const QString& comparativeForm = QString(),
+                   const QString& superlativeForm = QString());
 
     bool updateWord(int id,
                     const QString& germanWord,
@@ -64,7 +72,14 @@ public:
                     const QString& nativeTranslation,
                     const QString& examplePhraseDe = QString(),
                     const QString& examplePhraseNative = QString(),
-                    int groupId = -1);
+                    int groupId = -1,
+                    const QString& syncId = QString(),
+                    const QString& pluralForm = QString(),
+                    const QString& praeteritumForm = QString(),
+                    const QString& partizipIIForm = QString(),
+                    const QString& positiveForm = QString(),
+                    const QString& comparativeForm = QString(),
+                    const QString& superlativeForm = QString());
 
     bool deleteWord(int id);
 
@@ -85,9 +100,15 @@ public:
     QVariantList fetchRandomWords(int limit,
                                   int groupId = -1);
 
+    QVariantList fetchTranslationQuizWords(int limit,
+                                           int groupId = -1,
+                                           const QString& partOfSpeech = QString());
+
     QVariantList fetchNouns(int groupId = -1);
 
     int getWordCount(int groupId = -1);
+    int getTranslationQuizWordCount(int groupId = -1,
+                                    const QString& partOfSpeech = QString());
     int getGroupCount();
     int getNounCount(int groupId = -1);
 
@@ -133,6 +154,21 @@ private:
     bool wordExistsNoLock(const QString& germanWord,
                           const QString& nativeTranslation,
                           int excludingId = -1);
+
+    bool createPhraseFromExampleNoLock(const QString& parentPartOfSpeech,
+                                       const QString& examplePhraseDe,
+                                       const QString& examplePhraseNative,
+                                       int groupId);
+
+    bool columnExistsNoLock(const QString& tableName,
+                            const QString& columnName,
+                            const QString& schemaName = QString());
+
+    bool addColumnIfMissingNoLock(const QString& tableName,
+                                  const QString& columnName,
+                                  const QString& definition);
+
+    bool backfillMissingSyncIdsNoLock(const QString& qualifiedTableName = QStringLiteral("words"));
 
     QString sortClause(const QString& sortMode) const;
     QVariant nullVariant() const;

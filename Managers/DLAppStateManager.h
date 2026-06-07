@@ -79,10 +79,18 @@ public:
     Q_INVOKABLE void openEditWord(int id);
 
     Q_INVOKABLE QVariantList availableQuizModes();
-    Q_INVOKABLE int availableQuizQuestionCount(const QString& type, int groupId = -1);
+    Q_INVOKABLE int availableQuizQuestionCount(const QString& type,
+                                               int groupId = -1,
+                                               const QString& partOfSpeech = QString());
     Q_INVOKABLE QString selectedQuizType() const;
-    Q_INVOKABLE bool canStartQuiz(const QString& type, int groupId = -1, int questionCount = 10);
-    Q_INVOKABLE bool startQuiz(const QString& type, int groupId = -1, int questionCount = 10);
+    Q_INVOKABLE bool canStartQuiz(const QString& type,
+                                  int groupId = -1,
+                                  int questionCount = 10,
+                                  const QString& partOfSpeech = QString());
+    Q_INVOKABLE bool startQuiz(const QString& type,
+                               int groupId = -1,
+                               int questionCount = 10,
+                               const QString& partOfSpeech = QString());
     Q_INVOKABLE QVariantMap currentQuizQuestion() const;
     Q_INVOKABLE QVariantMap submitQuizAnswer(const QString& answer);
     Q_INVOKABLE bool nextQuizQuestion();
@@ -113,7 +121,7 @@ private:
     QuizType quizTypeFromString(const QString& type) const;
     QString quizTypeToString(QuizType type) const;
     QString quizTypeTitle(QuizType type) const;
-    int availableQuestionCount(QuizType type, int groupId) const;
+    int availableQuestionCount(QuizType type, int groupId, const QString& partOfSpeech = QString()) const;
     QVariantList answerOptionsForTranslation(const QVariantMap& word, const QVariantList& pool) const;
     QVariantMap buildQuestion(QuizType type, const QVariantMap& word, const QVariantList& pool) const;
     void updateQuizResultCache();

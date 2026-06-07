@@ -16,13 +16,13 @@ DLAppPage {
     property string selectedArticle: ""
     property string selectedPartOfSpeech: "Nomen"
     property string errorMessage: ""
+    property string suggestionMessage: ""
 
     title: ""
     showHeader: false
     activeTab: "add"
 
     readonly property var articleOptions: [
-        { label: "None", value: "" },
         { label: "der", value: "der" },
         { label: "die", value: "die" },
         { label: "das", value: "das" }
@@ -30,9 +30,8 @@ DLAppPage {
     readonly property var partOfSpeechOptions: [
         "Nomen",
         "Verb",
-        "Adj",
-        "Adv",
-        "Phrase",
+        "Adjektiv",
+        "Adverb",
         "Andere"
     ]
 
@@ -79,12 +78,72 @@ DLAppPage {
         germanWordField.text = word.german_word || ""
         translationField.text = word.native_translation || ""
         selectedArticle = word.article || ""
-        selectedPartOfSpeech = word.part_of_speech || "Nomen"
+        selectedPartOfSpeech = normalizedPartOfSpeech(word.part_of_speech || "Nomen")
         selectedGroupId = word.group_id === undefined || word.group_id === null ? -1 : word.group_id
+        pluralFormField.text = word.plural_form || word.pluralForm || ""
+        praeteritumFormField.text = word.praeteritum_form || word.praeteritumForm || ""
+        partizipIIFormField.text = word.partizip_ii_form || word.partizipIIForm || ""
+        positiveFormField.text = word.positive_form || word.positiveForm || ""
+        comparativeFormField.text = word.comparative_form || word.comparativeForm || ""
+        superlativeFormField.text = word.superlative_form || word.superlativeForm || ""
         germanExampleField.text = word.example_phrase_de || ""
         nativeExampleField.text = word.example_phrase_native || ""
 
         selectGroup(selectedGroupId)
+        updateSuggestion()
+    }
+
+    function normalizedPartOfSpeech(value) {
+        var trimmedValue = (value || "").trim()
+
+        if (trimmedValue === "Adj") {
+            return "Adjektiv"
+        }
+
+        if (trimmedValue === "Adv") {
+            return "Adverb"
+        }
+
+        if (trimmedValue === "Substantiv") {
+            return "Nomen"
+        }
+
+        if (partOfSpeechOptions.indexOf(trimmedValue) >= 0) {
+            return trimmedValue
+        }
+
+        return "Andere"
+    }
+
+    function articleFromGermanWord(value) {
+        var match = (value || "").trim().match(/^(der|die|das)\s+(.+)$/i)
+        if (!match) {
+            return null
+        }
+
+        return {
+            article: match[1].toLowerCase(),
+            word: match[2].trim()
+        }
+    }
+
+    function applyArticleDetection() {
+        var parsed = articleFromGermanWord(germanWordField.text)
+        if (!parsed || parsed.word.length === 0) {
+            return
+        }
+
+        selectedArticle = parsed.article
+        selectedPartOfSpeech = "Nomen"
+        germanWordField.text = parsed.word
+        germanWordField.cursorPosition = germanWordField.text.length
+        updateSuggestion()
+    }
+
+    function updateSuggestion() {
+        suggestionMessage = selectedPartOfSpeech === "Nomen" && selectedArticle.length === 0
+            ? "Article is strongly suggested for nouns."
+            : ""
     }
 
     function selectGroup(groupId) {
@@ -102,6 +161,8 @@ DLAppPage {
     }
 
     function validateForm() {
+        applyArticleDetection()
+
         if (germanWordField.text.trim().length === 0) {
             errorMessage = "German word is required."
             germanWordField.forceActiveFocus()
@@ -115,18 +176,25 @@ DLAppPage {
         }
 
         errorMessage = ""
+        updateSuggestion()
         return true
     }
 
     function wordPayload() {
         return {
-            german_word: germanWordField.text,
-            native_translation: translationField.text,
-            article: selectedArticle,
+            german_word: germanWordField.text.trim(),
+            native_translation: translationField.text.trim(),
+            article: selectedPartOfSpeech === "Nomen" ? selectedArticle : "",
             part_of_speech: selectedPartOfSpeech,
             group_id: selectedGroupId >= 0 ? selectedGroupId : null,
-            example_phrase_de: germanExampleField.text,
-            example_phrase_native: nativeExampleField.text
+            plural_form: selectedPartOfSpeech === "Nomen" ? pluralFormField.text.trim() : "",
+            praeteritum_form: selectedPartOfSpeech === "Verb" ? praeteritumFormField.text.trim() : "",
+            partizip_ii_form: selectedPartOfSpeech === "Verb" ? partizipIIFormField.text.trim() : "",
+            positive_form: selectedPartOfSpeech === "Adjektiv" ? positiveFormField.text.trim() : "",
+            comparative_form: selectedPartOfSpeech === "Adjektiv" ? comparativeFormField.text.trim() : "",
+            superlative_form: selectedPartOfSpeech === "Adjektiv" ? superlativeFormField.text.trim() : "",
+            example_phrase_de: germanExampleField.text.trim(),
+            example_phrase_native: nativeExampleField.text.trim()
         }
     }
 
@@ -247,6 +315,7 @@ DLAppPage {
                 selectByMouse: true
                 background: FieldBackground {}
                 onTextChanged: if (root.errorMessage.length > 0) root.errorMessage = ""
+                onTextEdited: root.applyArticleDetection()
             }
         }
 
@@ -276,12 +345,15 @@ DLAppPage {
                 selectedValue: root.selectedPartOfSpeech
                 onSelected: function(value) {
                     root.selectedPartOfSpeech = value
+                    root.updateSuggestion()
                 }
             }
         }
 
         FieldBlock {
             label: "Article"
+            visible: root.selectedPartOfSpeech === "Nomen"
+            Layout.fillWidth: true
 
             SegmentedSelector {
                 Layout.fillWidth: true
@@ -289,8 +361,116 @@ DLAppPage {
                 model: root.articleOptions
                 selectedValue: root.selectedArticle
                 onSelected: function(value) {
-                    root.selectedArticle = value
+                    root.selectedArticle = root.selectedArticle === value ? "" : value
+                    root.updateSuggestion()
                 }
+            }
+        }
+
+        Text {
+            visible: root.suggestionMessage.length > 0
+            Layout.fillWidth: true
+            Layout.leftMargin: 4
+            text: root.suggestionMessage
+            color: root.textMuted
+            wrapMode: Text.WordWrap
+            font.pixelSize: 13
+            font.weight: Font.DemiBold
+        }
+
+        FieldBlock {
+            label: "Plural form"
+            visible: root.selectedPartOfSpeech === "Nomen"
+            Layout.fillWidth: true
+
+            TextField {
+                id: pluralFormField
+                Layout.fillWidth: true
+                placeholderText: "Tische"
+                font.pixelSize: 15
+                color: root.textMain
+                selectByMouse: true
+                background: FieldBackground {}
+            }
+        }
+
+        FieldBlock {
+            label: "Präteritum"
+            visible: root.selectedPartOfSpeech === "Verb"
+            Layout.fillWidth: true
+
+            TextField {
+                id: praeteritumFormField
+                Layout.fillWidth: true
+                placeholderText: "ging"
+                font.pixelSize: 15
+                color: root.textMain
+                selectByMouse: true
+                background: FieldBackground {}
+            }
+        }
+
+        FieldBlock {
+            label: "Partizip II"
+            visible: root.selectedPartOfSpeech === "Verb"
+            Layout.fillWidth: true
+
+            TextField {
+                id: partizipIIFormField
+                Layout.fillWidth: true
+                placeholderText: "gegangen"
+                font.pixelSize: 15
+                color: root.textMain
+                selectByMouse: true
+                background: FieldBackground {}
+            }
+        }
+
+        FieldBlock {
+            label: "Positive"
+            visible: root.selectedPartOfSpeech === "Adjektiv"
+            Layout.fillWidth: true
+
+            TextField {
+                id: positiveFormField
+                Layout.fillWidth: true
+                placeholderText: "gut"
+                font.pixelSize: 15
+                color: root.textMain
+                selectByMouse: true
+                background: FieldBackground {}
+            }
+        }
+
+        FieldBlock {
+            label: "Comparative"
+            visible: root.selectedPartOfSpeech === "Adjektiv"
+            Layout.fillWidth: true
+
+            TextField {
+                id: comparativeFormField
+                Layout.fillWidth: true
+                placeholderText: "besser"
+                font.pixelSize: 15
+                color: root.textMain
+                selectByMouse: true
+                background: FieldBackground {}
+            }
+        }
+
+        FieldBlock {
+            label: "Superlative"
+            visible: root.selectedPartOfSpeech === "Adjektiv"
+            Layout.fillWidth: true
+
+            TextField {
+                id: superlativeFormField
+                Layout.fillWidth: true
+                placeholderText: "am besten"
+                font.pixelSize: 15
+                color: root.textMain
+                selectByMouse: true
+                background: FieldBackground {}
             }
         }
 

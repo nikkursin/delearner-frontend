@@ -247,7 +247,14 @@ int DLAppStateManager::createWord(const QVariantMap& wordData)
         trimmedStringValue(wordData, QStringLiteral("native_translation")),
         trimmedStringValue(wordData, QStringLiteral("example_phrase_de")),
         trimmedStringValue(wordData, QStringLiteral("example_phrase_native")),
-        groupIdFromWordData(wordData)
+        groupIdFromWordData(wordData),
+        trimmedStringValue(wordData, QStringLiteral("sync_id")),
+        trimmedStringValue(wordData, QStringLiteral("plural_form")),
+        trimmedStringValue(wordData, QStringLiteral("praeteritum_form")),
+        trimmedStringValue(wordData, QStringLiteral("partizip_ii_form")),
+        trimmedStringValue(wordData, QStringLiteral("positive_form")),
+        trimmedStringValue(wordData, QStringLiteral("comparative_form")),
+        trimmedStringValue(wordData, QStringLiteral("superlative_form"))
         );
 
     if (newId < 0) {
@@ -275,7 +282,14 @@ bool DLAppStateManager::updateWord(int id, const QVariantMap& wordData)
         trimmedStringValue(wordData, QStringLiteral("native_translation")),
         trimmedStringValue(wordData, QStringLiteral("example_phrase_de")),
         trimmedStringValue(wordData, QStringLiteral("example_phrase_native")),
-        groupIdFromWordData(wordData)
+        groupIdFromWordData(wordData),
+        trimmedStringValue(wordData, QStringLiteral("sync_id")),
+        trimmedStringValue(wordData, QStringLiteral("plural_form")),
+        trimmedStringValue(wordData, QStringLiteral("praeteritum_form")),
+        trimmedStringValue(wordData, QStringLiteral("partizip_ii_form")),
+        trimmedStringValue(wordData, QStringLiteral("positive_form")),
+        trimmedStringValue(wordData, QStringLiteral("comparative_form")),
+        trimmedStringValue(wordData, QStringLiteral("superlative_form"))
         );
 
     if (!success) {
@@ -477,10 +491,10 @@ QString DLAppStateManager::selectedQuizType() const
     return quizTypeToString(m_selectedQuizType);
 }
 
-int DLAppStateManager::availableQuizQuestionCount(const QString& type, int groupId)
+int DLAppStateManager::availableQuizQuestionCount(const QString& type, int groupId, const QString& partOfSpeech)
 {
     const QuizType quizType = quizTypeFromString(type);
-    const int count = availableQuestionCount(quizType, groupId);
+    const int count = availableQuestionCount(quizType, groupId, partOfSpeech);
     if (quizType == UnknownQuiz) {
         setLastError(QStringLiteral("Choose a quiz type."));
     } else {
@@ -489,7 +503,7 @@ int DLAppStateManager::availableQuizQuestionCount(const QString& type, int group
     return count;
 }
 
-bool DLAppStateManager::canStartQuiz(const QString& type, int groupId, int questionCount)
+bool DLAppStateManager::canStartQuiz(const QString& type, int groupId, int questionCount, const QString& partOfSpeech)
 {
     const QuizType quizType = quizTypeFromString(type);
     if (quizType == UnknownQuiz) {
@@ -502,7 +516,7 @@ bool DLAppStateManager::canStartQuiz(const QString& type, int groupId, int quest
         return false;
     }
 
-    const int availableCount = availableQuestionCount(quizType, groupId);
+    const int availableCount = availableQuestionCount(quizType, groupId, partOfSpeech);
     const int minimumCount = quizType == TranslationQuiz ? 2 : 1;
     if (availableCount < minimumCount) {
         setLastError(quizType == TranslationQuiz
@@ -522,17 +536,17 @@ bool DLAppStateManager::canStartQuiz(const QString& type, int groupId, int quest
     return true;
 }
 
-bool DLAppStateManager::startQuiz(const QString& type, int groupId, int questionCount)
+bool DLAppStateManager::startQuiz(const QString& type, int groupId, int questionCount, const QString& partOfSpeech)
 {
     const QuizType quizType = quizTypeFromString(type);
-    if (!canStartQuiz(type, groupId, questionCount)) {
+    if (!canStartQuiz(type, groupId, questionCount, partOfSpeech)) {
         return false;
     }
 
-    const int availableCount = availableQuestionCount(quizType, groupId);
+    const int availableCount = availableQuestionCount(quizType, groupId, partOfSpeech);
     const QVariantList pool = quizType == ArticleQuiz
         ? DLDatabaseManager::instance().fetchNouns(groupId)
-        : DLDatabaseManager::instance().fetchRandomWords(availableCount, groupId);
+        : DLDatabaseManager::instance().fetchTranslationQuizWords(availableCount, groupId, partOfSpeech);
 
     QVariantList questionRows = pool;
     if (quizType == ArticleQuiz) {
@@ -772,10 +786,10 @@ QString DLAppStateManager::quizTypeTitle(QuizType type) const
     }
 }
 
-int DLAppStateManager::availableQuestionCount(QuizType type, int groupId) const
+int DLAppStateManager::availableQuestionCount(QuizType type, int groupId, const QString& partOfSpeech) const
 {
     if (type == TranslationQuiz) {
-        return DLDatabaseManager::instance().getWordCount(groupId);
+        return DLDatabaseManager::instance().getTranslationQuizWordCount(groupId, partOfSpeech);
     }
 
     if (type == ArticleQuiz) {
@@ -910,6 +924,20 @@ int DLAppStateManager::groupIdFromWordData(const QVariantMap& wordData) const
 
 QString DLAppStateManager::trimmedStringValue(const QVariantMap& wordData, const QString& key) const
 {
+    static const QVariantMap camelCaseAliases = {
+        { QStringLiteral("sync_id"), QStringLiteral("syncId") },
+        { QStringLiteral("plural_form"), QStringLiteral("pluralForm") },
+        { QStringLiteral("praeteritum_form"), QStringLiteral("praeteritumForm") },
+        { QStringLiteral("partizip_ii_form"), QStringLiteral("partizipIIForm") },
+        { QStringLiteral("positive_form"), QStringLiteral("positiveForm") },
+        { QStringLiteral("comparative_form"), QStringLiteral("comparativeForm") },
+        { QStringLiteral("superlative_form"), QStringLiteral("superlativeForm") }
+    };
+
+    if (!wordData.contains(key) && camelCaseAliases.contains(key)) {
+        return wordData.value(camelCaseAliases.value(key).toString()).toString().trimmed();
+    }
+
     return wordData.value(key).toString().trimmed();
 }
 
