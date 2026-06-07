@@ -2,6 +2,7 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Controls.impl
 import QtQuick.Layouts
 
 DLAppPage {
@@ -69,27 +70,31 @@ DLAppPage {
         Layout.fillWidth: true
         Layout.preferredHeight: 64
 
-        Rectangle {
+        Button {
+            id: retryBackButton
+
             anchors {
                 left: parent.left
                 verticalCenter: parent.verticalCenter
             }
             width: 42
             height: 42
-            radius: 14
-            color: "#ffffff"
+            text: ""
+            onClicked: root.retryQuiz()
 
-            Text {
-                anchors.centerIn: parent
-                text: "‹"
-                color: root.textMain
-                font.pixelSize: 28
-                font.weight: Font.Light
+            contentItem: Item {
+                IconImage {
+                    anchors.centerIn: parent
+                    source: Qt.resolvedUrl("../../assets/icons/back_arrow_icon.svg")
+                    width: 16
+                    height: 26
+                    color: root.textMain
+                }
             }
 
-            MouseArea {
-                anchors.fill: parent
-                onClicked: root.retryQuiz()
+            background: Rectangle {
+                radius: 14
+                color: "#ffffff"
             }
         }
 

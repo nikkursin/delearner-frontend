@@ -2,6 +2,7 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Controls.impl
 import QtQuick.Layouts
 
 DLAppPage {
@@ -140,10 +141,41 @@ DLAppPage {
         Layout.fillWidth: true
         Layout.preferredHeight: 84
 
-        Column {
+        Button {
+            id: backButton
+
             anchors {
                 left: parent.left
                 verticalCenter: parent.verticalCenter
+            }
+            width: 44
+            height: 44
+            text: ""
+            onClicked: root.exitQuiz()
+
+            contentItem: Item {
+                IconImage {
+                    anchors.centerIn: parent
+                    source: Qt.resolvedUrl("../../assets/icons/back_arrow_icon.svg")
+                    width: 18
+                    height: 28
+                    color: root.accent
+                }
+            }
+
+            background: Rectangle {
+                radius: 14
+                color: root.accentSoft
+                border.color: Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.24)
+                border.width: 1
+            }
+        }
+
+        Column {
+            anchors {
+                left: backButton.right
+                verticalCenter: parent.verticalCenter
+                leftMargin: 12
             }
             spacing: 3
 
@@ -158,23 +190,6 @@ DLAppPage {
                 text: "German noun articles"
                 color: root.textMuted
                 font.pixelSize: 13
-            }
-        }
-
-        Text {
-            anchors {
-                right: parent.right
-                verticalCenter: parent.verticalCenter
-            }
-            text: "Quit"
-            color: root.red
-            font.pixelSize: 15
-            font.weight: Font.DemiBold
-
-            MouseArea {
-                anchors.fill: parent
-                anchors.margins: -12
-                onClicked: root.exitQuiz()
             }
         }
 

@@ -64,22 +64,22 @@ DLAppPage {
 
     Item {
         Layout.fillWidth: true
-        Layout.preferredHeight: 102
+        Layout.preferredHeight: 76
 
         Column {
             anchors {
                 left: parent.left
                 right: parent.right
                 bottom: parent.bottom
-                bottomMargin: 18
+                bottomMargin: 12
             }
-            spacing: 6
+            spacing: 3
 
             Text {
                 width: parent.width
                 text: "Quiz"
                 color: root.textMain
-                font.pixelSize: 30
+                font.pixelSize: 26
                 font.weight: Font.ExtraBold
                 elide: Text.ElideRight
             }
@@ -88,8 +88,10 @@ DLAppPage {
                 width: parent.width
                 text: "Choose a practice mode and start a quiz session."
                 color: root.textMuted
-                font.pixelSize: 15
+                font.pixelSize: 14
                 wrapMode: Text.WordWrap
+                maximumLineCount: 1
+                elide: Text.ElideRight
             }
         }
 
@@ -106,24 +108,24 @@ DLAppPage {
 
     ColumnLayout {
         Layout.fillWidth: true
-        Layout.topMargin: 26
-        spacing: 20
+        Layout.topMargin: 14
+        spacing: 12
 
         ColumnLayout {
             Layout.fillWidth: true
-            spacing: 10
+            spacing: 7
 
             Rectangle {
                 Layout.alignment: Qt.AlignHCenter
-                Layout.preferredWidth: 82
-                Layout.preferredHeight: 82
-                radius: 26
+                Layout.preferredWidth: 58
+                Layout.preferredHeight: 58
+                radius: 18
                 color: Qt.rgba(0 / 255, 122 / 255, 255 / 255, 0.10)
 
                 IconImage {
                     anchors.centerIn: parent
-                    width: 44
-                    height: 44
+                    width: 34
+                    height: 34
                     source: Qt.resolvedUrl("../../assets/icons/brain_quiz_icon.svg")
                 }
             }
@@ -133,7 +135,7 @@ DLAppPage {
                 text: "Choose Quiz Type"
                 color: root.textMain
                 horizontalAlignment: Text.AlignHCenter
-                font.pixelSize: 24
+                font.pixelSize: 21
                 font.weight: Font.ExtraBold
             }
 
@@ -145,7 +147,7 @@ DLAppPage {
                 color: root.textMuted
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.WordWrap
-                font.pixelSize: 15
+                font.pixelSize: 14
                 lineHeight: 1.15
             }
         }
@@ -184,15 +186,15 @@ DLAppPage {
 
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 86
-            Layout.topMargin: 6
-            radius: 18
+            Layout.preferredHeight: 66
+            Layout.topMargin: 0
+            radius: 16
             color: root.softPanel
 
             RowLayout {
                 anchors.fill: parent
-                anchors.margins: 14
-                spacing: 14
+                anchors.margins: 10
+                spacing: 10
 
                 StatBlock {
                     label: "Words Available"
@@ -214,7 +216,7 @@ DLAppPage {
             color: "#8a8a8e"
             horizontalAlignment: Text.AlignHCenter
             wrapMode: Text.WordWrap
-            font.pixelSize: 13
+            font.pixelSize: 12
             lineHeight: 1.15
         }
     }
@@ -228,39 +230,39 @@ DLAppPage {
         readonly property color titleColor: article ? root.orangeText : root.iosBlue
 
         Layout.fillWidth: true
-        Layout.preferredHeight: 104
+        Layout.preferredHeight: 88
         enabled: true
         text: ""
 
         contentItem: RowLayout {
             anchors.fill: parent
-            anchors.margins: 18
-            spacing: 16
+            anchors.margins: 14
+            spacing: 12
 
             Rectangle {
-                Layout.preferredWidth: 48
-                Layout.preferredHeight: 48
-                radius: 15
+                Layout.preferredWidth: 42
+                Layout.preferredHeight: 42
+                radius: 13
                 color: card.mode.available ? card.accent : "#c7c7cc"
 
                 Text {
                     anchors.centerIn: parent
                     text: card.article ? "der" : "A"
                     color: "white"
-                    font.pixelSize: card.article ? 16 : 20
+                    font.pixelSize: card.article ? 14 : 18
                     font.weight: Font.ExtraBold
                 }
             }
 
             ColumnLayout {
                 Layout.fillWidth: true
-                spacing: 5
+                spacing: 3
 
                 Text {
                     Layout.fillWidth: true
                     text: card.mode.title || ""
                     color: card.mode.available ? card.titleColor : root.textMuted
-                    font.pixelSize: 18
+                    font.pixelSize: 17
                     font.weight: Font.ExtraBold
                     elide: Text.ElideRight
                 }
@@ -280,13 +282,13 @@ DLAppPage {
             Text {
                 text: "›"
                 color: "#9a9aa0"
-                font.pixelSize: 30
+                font.pixelSize: 26
                 font.weight: Font.Light
             }
         }
 
         background: Rectangle {
-            radius: 20
+            radius: 18
             color: card.article ? Qt.rgba(255 / 255, 149 / 255, 0 / 255, card.down ? 0.18 : 0.12) : Qt.rgba(0 / 255, 122 / 255, 255 / 255, card.down ? 0.15 : 0.10)
             border.color: card.article ? Qt.rgba(255 / 255, 149 / 255, 0 / 255, 0.35) : Qt.rgba(0 / 255, 122 / 255, 255 / 255, 0.32)
             border.width: 2
@@ -308,7 +310,7 @@ DLAppPage {
             text: statBlock.value
             color: root.textMain
             horizontalAlignment: Text.AlignHCenter
-            font.pixelSize: 22
+            font.pixelSize: 19
             font.weight: Font.ExtraBold
         }
 
@@ -317,7 +319,7 @@ DLAppPage {
             text: statBlock.label
             color: "#7a7a80"
             horizontalAlignment: Text.AlignHCenter
-            font.pixelSize: 12
+            font.pixelSize: 11
         }
     }
 }

@@ -2,6 +2,7 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Controls.impl
 import QtQuick.Layouts
 
 DLAppPage {
@@ -139,34 +140,32 @@ DLAppPage {
 
     Item {
         Layout.fillWidth: true
-        Layout.preferredHeight: 104
+        Layout.preferredHeight: 70
 
         Button {
             id: backButton
 
             anchors {
                 left: parent.left
-                top: parent.top
-                topMargin: 6
+                verticalCenter: parent.verticalCenter
             }
-            width: 96
-            height: 36
-            text: "Back"
-            font.pixelSize: 14
-            font.weight: Font.DemiBold
+            width: 44
+            height: 44
+            text: ""
             onClicked: appStateManager.goQuizHomePage()
 
-            contentItem: Text {
-                text: backButton.text
-                color: root.accent
-                horizontalAlignment: Text.AlignHCenter
-                verticalAlignment: Text.AlignVCenter
-                font: backButton.font
-                elide: Text.ElideRight
+            contentItem: Item {
+                IconImage {
+                    anchors.centerIn: parent
+                    source: Qt.resolvedUrl("../../assets/icons/back_arrow_icon.svg")
+                    width: 18
+                    height: 28
+                    color: root.accent
+                }
             }
 
             background: Rectangle {
-                radius: 12
+                radius: 14
                 color: root.accentSoft
                 border.color: Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.24)
                 border.width: 1
@@ -175,18 +174,18 @@ DLAppPage {
 
         Column {
             anchors {
-                left: parent.left
+                left: backButton.right
                 right: parent.right
-                bottom: parent.bottom
-                bottomMargin: 18
+                verticalCenter: parent.verticalCenter
+                leftMargin: 12
             }
-            spacing: 4
+            spacing: 2
 
             Text {
                 width: parent.width
                 text: "Quiz Setup"
                 color: root.textMain
-                font.pixelSize: 28
+                font.pixelSize: 24
                 font.weight: Font.ExtraBold
                 elide: Text.ElideRight
             }
@@ -195,8 +194,10 @@ DLAppPage {
                 width: parent.width
                 text: "Configure the selected quiz before starting."
                 color: root.textMuted
-                font.pixelSize: 14
+                font.pixelSize: 13
                 wrapMode: Text.WordWrap
+                maximumLineCount: 1
+                elide: Text.ElideRight
             }
         }
 

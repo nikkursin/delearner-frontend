@@ -2,6 +2,7 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Controls.impl
 import QtQuick.Layouts
 
 DLAppPage {
@@ -238,17 +239,17 @@ DLAppPage {
             }
             width: 40
             height: 40
-            text: "\u2039"
-            font.pixelSize: 26
-            font.weight: Font.Bold
+            text: ""
             onClicked: root.goBack()
 
-            contentItem: Text {
-                text: backButton.text
-                color: root.blue
-                horizontalAlignment: Text.AlignHCenter
-                verticalAlignment: Text.AlignVCenter
-                font: backButton.font
+            contentItem: Item {
+                IconImage {
+                    anchors.centerIn: parent
+                    source: Qt.resolvedUrl("../../assets/icons/back_arrow_icon.svg")
+                    width: 16
+                    height: 26
+                    color: root.blue
+                }
             }
 
             background: Rectangle {
