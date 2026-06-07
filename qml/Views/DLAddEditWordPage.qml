@@ -255,7 +255,7 @@ DLAppPage {
             anchors.centerIn: parent
             text: root.editMode ? "Edit Word" : "Add Word"
             color: root.textMain
-            font.pixelSize: 17
+            font.pixelSize: 25
             font.weight: Font.ExtraBold
             elide: Text.ElideRight
         }

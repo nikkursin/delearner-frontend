@@ -17,7 +17,6 @@ DLAppPage {
     property var quizModes: []
     property string errorMessage: ""
 
-    readonly property color pageLine: "#ececec"
     readonly property color softPanel: "#f5f5f7"
     readonly property color iosBlue: "#007aff"
     readonly property color iosOrange: "#ff9500"
@@ -64,22 +63,21 @@ DLAppPage {
 
     Item {
         Layout.fillWidth: true
-        Layout.preferredHeight: 76
+        Layout.preferredHeight: 90
 
         Column {
             anchors {
                 left: parent.left
                 right: parent.right
-                bottom: parent.bottom
-                bottomMargin: 12
+                verticalCenter: parent.verticalCenter
             }
-            spacing: 3
+            spacing: 5
 
             Text {
                 width: parent.width
                 text: "Quiz"
                 color: root.textMain
-                font.pixelSize: 26
+                font.pixelSize: 34
                 font.weight: Font.ExtraBold
                 elide: Text.ElideRight
             }
@@ -88,67 +86,71 @@ DLAppPage {
                 width: parent.width
                 text: "Choose a practice mode and start a quiz session."
                 color: root.textMuted
-                font.pixelSize: 14
-                wrapMode: Text.WordWrap
-                maximumLineCount: 1
+                font.pixelSize: 15
+                font.weight: Font.DemiBold
                 elide: Text.ElideRight
             }
-        }
-
-        Rectangle {
-            anchors {
-                left: parent.left
-                right: parent.right
-                bottom: parent.bottom
-            }
-            height: 1
-            color: root.pageLine
         }
     }
 
     ColumnLayout {
         Layout.fillWidth: true
         Layout.topMargin: 14
-        spacing: 12
+        spacing: 14
 
-        ColumnLayout {
+        Item {
             Layout.fillWidth: true
-            spacing: 7
+            Layout.preferredHeight: 164
 
-            Rectangle {
-                Layout.alignment: Qt.AlignHCenter
-                Layout.preferredWidth: 58
-                Layout.preferredHeight: 58
-                radius: 18
-                color: Qt.rgba(0 / 255, 122 / 255, 255 / 255, 0.10)
-
-                IconImage {
-                    anchors.centerIn: parent
-                    width: 34
-                    height: 34
-                    source: Qt.resolvedUrl("../../assets/icons/brain_quiz_icon.svg")
+            ColumnLayout {
+                anchors {
+                    left: parent.left
+                    right: parent.right
+                    verticalCenter: parent.verticalCenter
+                    leftMargin: 10
+                    rightMargin: 10
                 }
-            }
+                spacing: 10
 
-            Text {
-                Layout.fillWidth: true
-                text: "Choose Quiz Type"
-                color: root.textMain
-                horizontalAlignment: Text.AlignHCenter
-                font.pixelSize: 21
-                font.weight: Font.ExtraBold
-            }
+                Rectangle {
+                    Layout.alignment: Qt.AlignHCenter
+                    Layout.preferredWidth: 82
+                    Layout.preferredHeight: 82
+                    radius: 26
+                    color: Qt.rgba(0 / 255, 122 / 255, 255 / 255, 0.10)
 
-            Text {
-                Layout.fillWidth: true
-                Layout.leftMargin: 10
-                Layout.rightMargin: 10
-                text: "Practice vocabulary through translation and German article recognition."
-                color: root.textMuted
-                horizontalAlignment: Text.AlignHCenter
-                wrapMode: Text.WordWrap
-                font.pixelSize: 14
-                lineHeight: 1.15
+                    IconImage {
+                        anchors.centerIn: parent
+                        width: 42
+                        height: 42
+                        source: Qt.resolvedUrl("../../assets/icons/brain_quiz_icon.svg")
+                    }
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    Layout.topMargin: 4
+                    text: "Choose Quiz Type"
+                    color: root.textMain
+                    horizontalAlignment: Text.AlignHCenter
+                    font.pixelSize: 24
+                    font.weight: Font.ExtraBold
+                    elide: Text.ElideRight
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 10
+                    Layout.rightMargin: 10
+                    text: "Practice vocabulary through translation and German article recognition."
+                    color: root.textMuted
+                    horizontalAlignment: Text.AlignHCenter
+                    wrapMode: Text.WordWrap
+                    maximumLineCount: 2
+                    elide: Text.ElideRight
+                    font.pixelSize: 15
+                    lineHeight: 1.22
+                }
             }
         }
 
@@ -186,7 +188,7 @@ DLAppPage {
 
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 66
+            Layout.preferredHeight: 72
             Layout.topMargin: 0
             radius: 16
             color: root.softPanel
@@ -230,26 +232,26 @@ DLAppPage {
         readonly property color titleColor: article ? root.orangeText : root.iosBlue
 
         Layout.fillWidth: true
-        Layout.preferredHeight: 88
+        Layout.preferredHeight: 96
         enabled: true
         text: ""
 
         contentItem: RowLayout {
             anchors.fill: parent
-            anchors.margins: 14
-            spacing: 12
+            anchors.margins: 16
+            spacing: 14
 
             Rectangle {
-                Layout.preferredWidth: 42
-                Layout.preferredHeight: 42
-                radius: 13
+                Layout.preferredWidth: 46
+                Layout.preferredHeight: 46
+                radius: 14
                 color: card.mode.available ? card.accent : "#c7c7cc"
 
                 Text {
                     anchors.centerIn: parent
                     text: card.article ? "der" : "A"
                     color: "white"
-                    font.pixelSize: card.article ? 14 : 18
+                    font.pixelSize: card.article ? 15 : 19
                     font.weight: Font.ExtraBold
                 }
             }
@@ -262,7 +264,7 @@ DLAppPage {
                     Layout.fillWidth: true
                     text: card.mode.title || ""
                     color: card.mode.available ? card.titleColor : root.textMuted
-                    font.pixelSize: 17
+                    font.pixelSize: 18
                     font.weight: Font.ExtraBold
                     elide: Text.ElideRight
                 }
@@ -282,7 +284,7 @@ DLAppPage {
             Text {
                 text: "›"
                 color: "#9a9aa0"
-                font.pixelSize: 26
+                font.pixelSize: 28
                 font.weight: Font.Light
             }
         }
