@@ -30,8 +30,8 @@ DLAppPage {
     readonly property var partOfSpeechOptions: [
         "Nomen",
         "Verb",
-        "Adjektiv",
-        "Adverb",
+        "Adj",
+        "Adv",
         "Phrase",
         "Andere"
     ]
@@ -39,7 +39,6 @@ DLAppPage {
     readonly property color fieldBg: "#f1f4f9"
     readonly property color red: "#dc3545"
     readonly property color redSoft: Qt.rgba(220 / 255, 53 / 255, 69 / 255, 0.10)
-    readonly property color blueSoft: Qt.rgba(51 / 255, 127 / 255, 230 / 255, 0.12)
 
     Component.onCompleted: {
         loadGroups()
@@ -270,23 +269,13 @@ DLAppPage {
         FieldBlock {
             label: "Part of speech"
 
-            Flow {
+            SegmentedSelector {
                 Layout.fillWidth: true
-                spacing: 10
-
-                Repeater {
-                    model: root.partOfSpeechOptions
-
-                    ChipButton {
-                        id: partOfSpeechDelegate
-
-                        required property var modelData
-
-                        width: Math.max(92, implicitWidth)
-                        text: partOfSpeechDelegate.modelData
-                        selected: root.selectedPartOfSpeech === partOfSpeechDelegate.modelData
-                        onClicked: root.selectedPartOfSpeech = partOfSpeechDelegate.modelData
-                    }
+                Layout.preferredHeight: 50
+                model: root.partOfSpeechOptions
+                selectedValue: root.selectedPartOfSpeech
+                onSelected: function(value) {
+                    root.selectedPartOfSpeech = value
                 }
             }
         }
@@ -294,23 +283,13 @@ DLAppPage {
         FieldBlock {
             label: "Article"
 
-            RowLayout {
+            SegmentedSelector {
                 Layout.fillWidth: true
-                spacing: 8
-
-                Repeater {
-                    model: root.articleOptions
-
-                    ChipButton {
-                        id: articleDelegate
-
-                        required property var modelData
-
-                        Layout.fillWidth: true
-                        text: articleDelegate.modelData.label
-                        selected: root.selectedArticle === articleDelegate.modelData.value
-                        onClicked: root.selectedArticle = articleDelegate.modelData.value
-                    }
+                Layout.preferredHeight: 50
+                model: root.articleOptions
+                selectedValue: root.selectedArticle
+                onSelected: function(value) {
+                    root.selectedArticle = value
                 }
             }
         }
@@ -423,35 +402,97 @@ DLAppPage {
         border.width: 1
     }
 
-    component ChipButton: Button {
-        id: chip
+    component SegmentedSelector: Rectangle {
+        id: selector
 
-        property bool selected: false
+        property var model: []
+        property var selectedValue: ""
 
-        implicitWidth: chipLabel.implicitWidth + 28
-        implicitHeight: 42
-        font.pixelSize: 13
-        font.weight: Font.ExtraBold
-        padding: 0
+        signal selected(var value)
 
-        contentItem: Text {
-            id: chipLabel
+        implicitHeight: 50
+        radius: 16
+        color: root.cardBg
+        border.color: root.line
+        border.width: 1
+        clip: true
 
-            text: chip.text
-            leftPadding: 14
-            rightPadding: 14
-            color: chip.selected ? root.blue : root.textMuted
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
-            font: chip.font
-            elide: Text.ElideRight
+        function optionLabel(option) {
+            if (typeof option === "object" && option !== null && option.label !== undefined) {
+                return option.label
+            }
+
+            return option
         }
 
-        background: Rectangle {
-            radius: 21
-            color: chip.selected ? root.blueSoft : root.cardBg
-            border.color: chip.selected ? root.blue : root.line
-            border.width: chip.selected ? 2 : 1
+        function optionValue(option) {
+            if (typeof option === "object" && option !== null && option.value !== undefined) {
+                return option.value
+            }
+
+            return option
+        }
+
+        RowLayout {
+            anchors.fill: parent
+            spacing: 0
+
+            Repeater {
+                model: selector.model
+
+                delegate: Item {
+                    id: segment
+
+                    required property int index
+                    required property var modelData
+
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+
+                    readonly property var value: selector.optionValue(segment.modelData)
+                    readonly property bool checked: selector.selectedValue === segment.value
+
+                    Rectangle {
+                        anchors {
+                            fill: parent
+                            margins: 0
+                        }
+                        radius: selector.radius
+                        color: segment.checked ? root.blue : "transparent"
+                    }
+
+                    Rectangle {
+                        visible: segment.index > 0 && !segment.checked
+                        anchors {
+                            left: parent.left
+                            verticalCenter: parent.verticalCenter
+                        }
+                        width: 1
+                        height: parent.height - 18
+                        color: root.line
+                    }
+
+                    Text {
+                        anchors {
+                            fill: parent
+                            leftMargin: 4
+                            rightMargin: 4
+                        }
+                        text: selector.optionLabel(segment.modelData)
+                        color: segment.checked ? "white" : root.textMain
+                        font.pixelSize: 13
+                        font.weight: segment.checked ? Font.ExtraBold : Font.DemiBold
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                        elide: Text.ElideRight
+                    }
+
+                    MouseArea {
+                        anchors.fill: parent
+                        onClicked: selector.selected(segment.value)
+                    }
+                }
+            }
         }
     }
 }
