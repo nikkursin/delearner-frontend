@@ -1,15 +1,15 @@
 #ifndef DLDATABASEMANAGER_H
 #define DLDATABASEMANAGER_H
 
+#include <functional>
+
+#include <QList>
+#include <QMutex>
+#include <QSqlDatabase>
 #include <QString>
-#include <QStringList>
 #include <QVariant>
 #include <QVariantList>
 #include <QVariantMap>
-#include <QSqlDatabase>
-#include <QMutex>
-#include <QList>
-
 
 struct DLSqlCommand
 {
@@ -33,20 +33,30 @@ public:
     void closeDatabase();
 
     bool createTablesIfNeeded();
-    bool migrateDatabaseIfNeeded();
     bool createIndexesIfNeeded();
 
+    QString databasePath() const;
     QString lastError() const;
+    void setLastError(const QString& error);
+
+    bool executeSql(const QString& sql, const QVariantMap& args = {});
+    bool executeSqlBatch(const QList<DLSqlCommand>& commands);
+    int executeInsert(const QString& sql, const QVariantMap& args = {});
+    QVariantList selectRows(const QString& sql, const QVariantMap& args = {});
+    QVariantMap selectOneRow(const QString& sql, const QVariantMap& args = {});
+    int selectInt(const QString& sql, const QVariantMap& args = {}, int fallback = 0);
+    bool transaction(const std::function<bool(QSqlDatabase&, QString*)>& callback);
+
+    static qint64 currentUnixTime();
+    static QString normalizedText(const QString& value);
+    static QVariant nullVariant();
 
     int insertGroup(const QString& name,
                     const QString& colorHex = QStringLiteral("#3366CC"));
-
     bool updateGroup(int id,
                      const QString& name,
                      const QString& colorHex);
-
     bool deleteGroup(int id);
-
     QVariantList fetchAllGroups();
     QVariantMap fetchGroupById(int id);
 
@@ -82,114 +92,34 @@ public:
                     const QString& superlativeForm = QString());
 
     bool deleteWord(int id);
-
     QVariantMap fetchWordById(int id);
-
     bool wordExists(const QString& germanWord,
                     const QString& nativeTranslation,
                     int excludingId = -1);
-
     QVariantList fetchAllWords(const QString& sortMode = QStringLiteral("newest"),
                                int groupId = -1);
-
     QVariantList searchWords(const QString& query,
                              int groupId = -1);
-
     QVariantList fetchWordsByGroup(int groupId);
-
     QVariantList fetchRandomWords(int limit,
                                   int groupId = -1);
-
     QVariantList fetchTranslationQuizWords(int limit,
                                            int groupId = -1,
                                            const QString& partOfSpeech = QString());
-
     QVariantList fetchNouns(int groupId = -1);
-
     int getWordCount(int groupId = -1);
     int getTranslationQuizWordCount(int groupId = -1,
                                     const QString& partOfSpeech = QString());
     int getGroupCount();
     int getNounCount(int groupId = -1);
-
     bool incrementCorrectAnswer(int wordId);
     bool incrementWrongAnswer(int wordId);
-
     QVariantMap getDatabaseStats();
     bool importDatabaseMerge(const QString& sourceDatabasePath);
     bool deleteAllData();
 
 private:
-    bool executeSql(const QString& sql,
-                    const QVariantMap& args = {});
-
-    bool executeSqlBatch(const QList<DLSqlCommand>& commands);
-
-    QVariantList selectRows(const QString& sql,
-                            const QVariantMap& args = {});
-
-    QVariantMap selectOneRow(const QString& sql,
-                             const QVariantMap& args = {});
-
-    int selectInt(const QString& sql,
-                  const QVariantMap& args = {},
-                  int fallback = 0);
-
-private:
-    bool executeSqlNoLock(const QString& sql,
-                          const QVariantMap& args = {});
-
-    bool executeSqlBatchNoLock(const QList<DLSqlCommand>& commands);
-
-    QVariantList selectRowsNoLock(const QString& sql,
-                                  const QVariantMap& args = {});
-
-    QVariantMap selectOneRowNoLock(const QString& sql,
-                                   const QVariantMap& args = {});
-
-    int selectIntNoLock(const QString& sql,
-                        const QVariantMap& args = {},
-                        int fallback = 0);
-
-    bool wordExistsNoLock(const QString& germanWord,
-                          const QString& nativeTranslation,
-                          int excludingId = -1);
-
-    bool createPhraseFromExampleNoLock(const QString& parentPartOfSpeech,
-                                       const QString& examplePhraseDe,
-                                       const QString& examplePhraseNative,
-                                       int groupId);
-
-    bool columnExistsNoLock(const QString& tableName,
-                            const QString& columnName,
-                            const QString& schemaName = QString());
-
-    bool tableExistsNoLock(const QString& tableName,
-                           const QString& schemaName = QString());
-
-    bool addColumnIfMissingNoLock(const QString& tableName,
-                                  const QString& columnName,
-                                  const QString& definition);
-
-    bool migrateLegacyWordsNoLock();
-    bool upsertWordReviewStatsNoLock(int wordId,
-                                     int correctAnswers = 0,
-                                     int wrongAnswers = 0,
-                                     const QVariant& lastReviewedAt = QVariant());
-    bool saveWordFormsNoLock(int wordId,
-                             const QString& pluralForm,
-                             const QString& praeteritumForm,
-                             const QString& partizipIIForm,
-                             const QString& positiveForm,
-                             const QString& comparativeForm,
-                             const QString& superlativeForm);
-
-    QString sortClause(const QString& sortMode) const;
-    QVariant nullVariant() const;
-
-private:
     mutable QMutex m_mutex;
-
     QSqlDatabase m_db;
     QString m_lastError;
     QString m_connectionName;

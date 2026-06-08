@@ -36,14 +36,52 @@ list(REMOVE_ITEM AssetsFiles ${QmlFiles})
 list(APPEND AssetsFiles assets/icons/sort_words_icon.svg)
 list(REMOVE_DUPLICATES AssetsFiles)
 
-find_package(Qt6 REQUIRED COMPONENTS Core)
+find_package(Qt6 REQUIRED COMPONENTS Core Sql Test)
+
+set(DELEARNER_CORE_SOURCES
+    Managers/DLDatabaseMaintenanceService.cpp
+    Managers/DLDatabaseMaintenanceService.h
+    Managers/DLDatabaseManager.cpp
+    Managers/DLDatabaseManager.h
+    Managers/DLGroupRepository.cpp
+    Managers/DLGroupRepository.h
+    Managers/DLGroupService.cpp
+    Managers/DLGroupService.h
+    Managers/DLLogging.cpp
+    Managers/DLLogging.h
+    Managers/DLQuizRepository.cpp
+    Managers/DLQuizRepository.h
+    Managers/DLQuizService.cpp
+    Managers/DLQuizService.h
+    Managers/DLQuizSession.cpp
+    Managers/DLQuizSession.h
+    Managers/DLReviewStatsRepository.cpp
+    Managers/DLReviewStatsRepository.h
+    Managers/DLWordRepository.cpp
+    Managers/DLWordRepository.h
+    Managers/DLWordService.cpp
+    Managers/DLWordService.h
+    Models/DLModelMappers.cpp
+    Models/DLModelMappers.h
+    Models/DLQuizQuestion.h
+    Models/DLQuizResult.h
+    Models/DLWord.h
+    Models/DLWordForms.h
+    Models/DLWordGroup.h
+    Models/DLWordReviewStats.h
+)
+
+qt_add_library(delearner_core STATIC
+    ${DELEARNER_CORE_SOURCES}
+)
+
+target_include_directories(delearner_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(delearner_core PUBLIC Qt6::Core Qt6::Sql)
 
 qt_add_executable(delearner
     main.cpp
     Managers/DLAppStateManager.cpp
     Managers/DLAppStateManager.h
-    Managers/DLDatabaseManager.cpp
-    Managers/DLDatabaseManager.h
     ${QmlFiles}
     ${AssetsFiles}
 )
@@ -78,6 +116,11 @@ target_compile_definitions(delearner
 
 target_link_libraries(delearner PRIVATE Felgo)
 target_link_libraries(delearner PRIVATE Qt6::Core)
+target_link_libraries(delearner PRIVATE Qt6::Sql)
+target_link_libraries(delearner PRIVATE delearner_core)
+
+enable_testing()
+add_subdirectory(tests)
 
 # uncomment this line to add Felgo Hot Reload and use hot reloading with your custom C++ code
 # for the remaining steps see here: https://felgo.com/custom-code-reload-app/
