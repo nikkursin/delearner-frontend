@@ -5,10 +5,10 @@
 #include <QUuid>
 
 #include "Managers/DLDatabaseManager.h"
-#include "Managers/DLGroupRepository.h"
-#include "Managers/DLWordRepository.h"
 #include "Models/DLWord.h"
 #include "Models/DLWordGroup.h"
+#include "Repositories/DLGroupRepository.h"
+#include "Repositories/DLWordRepository.h"
 
 class TestWordRepository : public QObject
 {

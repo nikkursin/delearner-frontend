@@ -6,11 +6,11 @@
 #include <QUuid>
 
 #include "Managers/DLDatabaseManager.h"
-#include "Managers/DLGroupRepository.h"
-#include "Managers/DLQuizRepository.h"
-#include "Managers/DLWordRepository.h"
 #include "Models/DLWord.h"
 #include "Models/DLWordGroup.h"
+#include "Repositories/DLGroupRepository.h"
+#include "Repositories/DLQuizRepository.h"
+#include "Repositories/DLWordRepository.h"
 
 class TestQuizRepository : public QObject
 {

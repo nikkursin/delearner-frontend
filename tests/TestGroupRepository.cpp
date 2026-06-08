@@ -5,8 +5,8 @@
 #include <QUuid>
 
 #include "Managers/DLDatabaseManager.h"
-#include "Managers/DLGroupRepository.h"
 #include "Models/DLWordGroup.h"
+#include "Repositories/DLGroupRepository.h"
 
 class TestGroupRepository : public QObject
 {

@@ -39,49 +39,57 @@ list(REMOVE_DUPLICATES AssetsFiles)
 find_package(Qt6 REQUIRED COMPONENTS Core Sql Test)
 
 set(DELEARNER_CORE_SOURCES
-    Managers/DLDatabaseMaintenanceService.cpp
-    Managers/DLDatabaseMaintenanceService.h
-    Managers/DLDatabaseManager.cpp
-    Managers/DLDatabaseManager.h
-    Managers/DLGroupRepository.cpp
-    Managers/DLGroupRepository.h
-    Managers/DLGroupService.cpp
-    Managers/DLGroupService.h
-    Managers/DLLogging.cpp
-    Managers/DLLogging.h
-    Managers/DLQuizRepository.cpp
-    Managers/DLQuizRepository.h
-    Managers/DLQuizService.cpp
-    Managers/DLQuizService.h
-    Managers/DLQuizSession.cpp
-    Managers/DLQuizSession.h
-    Managers/DLReviewStatsRepository.cpp
-    Managers/DLReviewStatsRepository.h
-    Managers/DLWordRepository.cpp
-    Managers/DLWordRepository.h
-    Managers/DLWordService.cpp
-    Managers/DLWordService.h
-    Models/DLModelMappers.cpp
-    Models/DLModelMappers.h
-    Models/DLQuizQuestion.h
-    Models/DLQuizResult.h
-    Models/DLWord.h
-    Models/DLWordForms.h
-    Models/DLWordGroup.h
-    Models/DLWordReviewStats.h
+    src/Logging/DLLogging.cpp
+    src/Logging/DLLogging.h
+    src/Managers/DLDatabaseManager.cpp
+    src/Managers/DLDatabaseManager.h
+    src/Repositories/DLGroupRepository.cpp
+    src/Repositories/DLGroupRepository.h
+    src/Repositories/DLQuizRepository.cpp
+    src/Repositories/DLQuizRepository.h
+    src/Repositories/DLReviewStatsRepository.cpp
+    src/Repositories/DLReviewStatsRepository.h
+    src/Repositories/DLWordRepository.cpp
+    src/Repositories/DLWordRepository.h
+    src/Services/DLDatabaseMaintenanceService.cpp
+    src/Services/DLDatabaseMaintenanceService.h
+    src/Services/DLGroupService.cpp
+    src/Services/DLGroupService.h
+    src/Services/DLQuizService.cpp
+    src/Services/DLQuizService.h
+    src/Services/DLQuizSession.cpp
+    src/Services/DLQuizSession.h
+    src/Services/DLWordService.cpp
+    src/Services/DLWordService.h
+    src/Models/DLModelMappers.cpp
+    src/Models/DLModelMappers.h
+    src/Models/DLQuizQuestion.h
+    src/Models/DLQuizResult.h
+    src/Models/DLWord.h
+    src/Models/DLWordForms.h
+    src/Models/DLWordGroup.h
+    src/Models/DLWordReviewStats.h
 )
 
 qt_add_library(delearner_core STATIC
     ${DELEARNER_CORE_SOURCES}
 )
 
-target_include_directories(delearner_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(delearner_core
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Logging
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Managers
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Models
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Repositories
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Services
+)
 target_link_libraries(delearner_core PUBLIC Qt6::Core Qt6::Sql)
 
 qt_add_executable(delearner
     main.cpp
-    Managers/DLAppStateManager.cpp
-    Managers/DLAppStateManager.h
+    src/Managers/DLAppStateManager.cpp
+    src/Managers/DLAppStateManager.h
     ${QmlFiles}
     ${AssetsFiles}
 )
