@@ -24,6 +24,7 @@ private slots:
     void fetchTranslationQuizWordsReturnsExpectedNumberOfWords();
     void fetchNounsReturnsOnlyArticleEligibleWords();
     void getNounCountReturnsCorrectCount();
+    void nounQueriesAcceptCurrentNounLabels();
     void groupFilteringWorksForQuizQueries();
     void partOfSpeechFilteringWorks();
 
@@ -116,6 +117,19 @@ void TestQuizRepository::getNounCountReturnsCorrectCount()
     DLQuizRepository repository(DLDatabaseManager::instance());
 
     QCOMPARE(repository.getNounCount(), 2);
+}
+
+void TestQuizRepository::nounQueriesAcceptCurrentNounLabels()
+{
+    DLWordRepository words(DLDatabaseManager::instance());
+    QVERIFY(words.insertWord(word(QStringLiteral("Haus"), QStringLiteral("house"), QStringLiteral("Nomen"), QStringLiteral("das"))) > 0);
+    QVERIFY(words.insertWord(word(QStringLiteral("Baum"), QStringLiteral("tree"), QStringLiteral("Substantiv"), QStringLiteral("der"))) > 0);
+    QVERIFY(words.insertWord(word(QStringLiteral("Tuer"), QStringLiteral("door"), QStringLiteral("noun"), QStringLiteral("die"))) > 0);
+    QVERIFY(words.insertWord(word(QStringLiteral("gehen"), QStringLiteral("go"), QStringLiteral("Verb"))) > 0);
+
+    DLQuizRepository repository(DLDatabaseManager::instance());
+    QCOMPARE(repository.getNounCount(), 3);
+    QCOMPARE(repository.fetchNouns().size(), 3);
 }
 
 void TestQuizRepository::groupFilteringWorksForQuizQueries()

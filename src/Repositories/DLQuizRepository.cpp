@@ -56,7 +56,11 @@ QList<DLWord> DLQuizRepository::fetchNouns(int groupId)
         SELECT %1
         FROM %2
         WHERE w.deleted_at IS NULL
-          AND w.article IN ('der', 'die', 'das')
+          AND LOWER(TRIM(COALESCE(w.article, ''))) IN ('der', 'die', 'das')
+          AND (
+              LOWER(TRIM(COALESCE(w.part_of_speech, ''))) IN ('nomen', 'substantiv', 'noun')
+              OR LOWER(TRIM(COALESCE(w.article, ''))) IN ('der', 'die', 'das')
+          )
     )").arg(DLWordRepository::wordSelectColumns(), DLWordRepository::wordFromClause());
 
     QVariantMap args;
@@ -75,7 +79,11 @@ int DLQuizRepository::getNounCount(int groupId)
         SELECT COUNT(*)
         FROM words
         WHERE deleted_at IS NULL
-          AND article IN ('der', 'die', 'das')
+          AND LOWER(TRIM(COALESCE(article, ''))) IN ('der', 'die', 'das')
+          AND (
+              LOWER(TRIM(COALESCE(part_of_speech, ''))) IN ('nomen', 'substantiv', 'noun')
+              OR LOWER(TRIM(COALESCE(article, ''))) IN ('der', 'die', 'das')
+          )
     )");
     QVariantMap args;
 

@@ -23,6 +23,10 @@ private slots:
     void updateWordChangesCoreFields();
     void deleteWordRemovesWord();
     void duplicateDetectionUsesNormalizedWords();
+    void duplicateDetectionAllowsDifferentTranslations();
+    void wordExistsDoesNotReportDuplicateOnQueryFailure();
+    void fetchAllWordsReturnsInsertedUngroupedWord();
+    void fetchAllWordsExcludesSoftDeletedRows();
     void searchFindsGermanWordAndNativeTranslation_data();
     void searchFindsGermanWordAndNativeTranslation();
     void groupFilteringWorks();
@@ -132,6 +136,54 @@ void TestWordRepository::duplicateDetectionUsesNormalizedWords()
     QVERIFY(repository.wordExists(QStringLiteral("haus"), QStringLiteral("house")));
     QCOMPARE(repository.insertWord(word(QStringLiteral("haus"), QStringLiteral("house"))), -1);
     QVERIFY(DLDatabaseManager::instance().lastError().contains(QStringLiteral("Duplicate")));
+}
+
+void TestWordRepository::duplicateDetectionAllowsDifferentTranslations()
+{
+    DLWordRepository repository(DLDatabaseManager::instance());
+    QVERIFY(repository.insertWord(word(QStringLiteral("Bank"), QStringLiteral("bench"))) > 0);
+
+    QVERIFY(!repository.wordExists(QStringLiteral("Bank"), QStringLiteral("bank")));
+    QVERIFY2(repository.insertWord(word(QStringLiteral("Bank"), QStringLiteral("bank"))) > 0,
+             qPrintable(DLDatabaseManager::instance().lastError()));
+}
+
+void TestWordRepository::wordExistsDoesNotReportDuplicateOnQueryFailure()
+{
+    DLDatabaseManager::instance().closeDatabase();
+    DLWordRepository repository(DLDatabaseManager::instance());
+
+    QTest::ignoreMessage(QtWarningMsg, QRegularExpression(QStringLiteral(".*Failed SQL operation:.*")));
+    QVERIFY(!repository.wordExists(QStringLiteral("Haus"), QStringLiteral("house")));
+}
+
+void TestWordRepository::fetchAllWordsReturnsInsertedUngroupedWord()
+{
+    DLWordRepository repository(DLDatabaseManager::instance());
+    QVERIFY(repository.insertWord(word(QStringLiteral("Haus"), QStringLiteral("house"), QStringLiteral("Nomen"), QStringLiteral("das"))) > 0);
+
+    const QList<DLWord> words = repository.fetchAllWords(QStringLiteral("newest"), -1);
+    QCOMPARE(words.size(), 1);
+    QCOMPARE(words.first().germanWord, QStringLiteral("Haus"));
+    QCOMPARE(words.first().groupId, -1);
+}
+
+void TestWordRepository::fetchAllWordsExcludesSoftDeletedRows()
+{
+    DLWordRepository repository(DLDatabaseManager::instance());
+    const int activeId = repository.insertWord(word(QStringLiteral("Haus"), QStringLiteral("house")));
+    const int deletedId = repository.insertWord(word(QStringLiteral("Baum"), QStringLiteral("tree")));
+    QVERIFY(activeId > 0);
+    QVERIFY(deletedId > 0);
+
+    QVERIFY2(DLDatabaseManager::instance().executeSql(
+                 QStringLiteral("UPDATE words SET deleted_at = :deleted_at WHERE id = :id;"),
+                 {{ QStringLiteral(":deleted_at"), 10 }, { QStringLiteral(":id"), deletedId }}),
+             qPrintable(DLDatabaseManager::instance().lastError()));
+
+    const QList<DLWord> words = repository.fetchAllWords(QStringLiteral("newest"), -1);
+    QCOMPARE(words.size(), 1);
+    QCOMPARE(words.first().id, activeId);
 }
 
 void TestWordRepository::searchFindsGermanWordAndNativeTranslation_data()

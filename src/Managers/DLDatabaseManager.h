@@ -33,6 +33,7 @@ public:
     void closeDatabase();
 
     bool createTablesIfNeeded();
+    bool migrateSchemaIfNeeded();
     bool createIndexesIfNeeded();
 
     QString databasePath() const;
