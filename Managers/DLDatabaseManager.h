@@ -164,11 +164,25 @@ private:
                             const QString& columnName,
                             const QString& schemaName = QString());
 
+    bool tableExistsNoLock(const QString& tableName,
+                           const QString& schemaName = QString());
+
     bool addColumnIfMissingNoLock(const QString& tableName,
                                   const QString& columnName,
                                   const QString& definition);
 
-    bool backfillMissingSyncIdsNoLock(const QString& qualifiedTableName = QStringLiteral("words"));
+    bool migrateLegacyWordsNoLock();
+    bool upsertWordReviewStatsNoLock(int wordId,
+                                     int correctAnswers = 0,
+                                     int wrongAnswers = 0,
+                                     const QVariant& lastReviewedAt = QVariant());
+    bool saveWordFormsNoLock(int wordId,
+                             const QString& pluralForm,
+                             const QString& praeteritumForm,
+                             const QString& partizipIIForm,
+                             const QString& positiveForm,
+                             const QString& comparativeForm,
+                             const QString& superlativeForm);
 
     QString sortClause(const QString& sortMode) const;
     QVariant nullVariant() const;

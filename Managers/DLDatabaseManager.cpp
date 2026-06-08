@@ -7,7 +7,6 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QMutexLocker>
-#include <QUuid>
 
 static const QStringList wordMetadataColumns()
 {
@@ -21,41 +20,60 @@ static const QStringList wordMetadataColumns()
     };
 }
 
-static QString createSyncId()
+static QString normalizedText(const QString& value)
 {
-    return QUuid::createUuid().toString(QUuid::WithoutBraces);
+    return value.trimmed().toLower();
 }
 
-static QString sqliteUuidExpression()
+static QString nullableColumnSql(const QString& tableAlias,
+                                 const QString& columnName,
+                                 bool columnExists,
+                                 const QString& fallback = QStringLiteral("NULL"))
 {
-    return QStringLiteral(
-        "lower(hex(randomblob(4))) || '-' || "
-        "lower(hex(randomblob(2))) || '-4' || substr(lower(hex(randomblob(2))), 2) || '-' || "
-        "substr('89ab', abs(random()) % 4 + 1, 1) || substr(lower(hex(randomblob(2))), 2) || '-' || "
-        "lower(hex(randomblob(6)))"
-        );
-}
+    if (tableAlias.isEmpty()) {
+        return columnExists ? columnName : fallback;
+    }
 
-static QString nullableTextValueSql(const QString& tableAlias,
-                                    const QString& columnName,
-                                    bool columnExists)
-{
     return columnExists
         ? tableAlias + QStringLiteral(".") + columnName
-        : QStringLiteral("NULL");
+        : fallback;
 }
 
 static QString wordSelectColumns()
 {
     return QStringLiteral(
-        "id, sync_id, sync_id AS syncId, german_word, article, part_of_speech, native_translation, "
-        "example_phrase_de, example_phrase_native, group_id, plural_form, plural_form AS pluralForm, "
-        "praeteritum_form, praeteritum_form AS praeteritumForm, "
-        "partizip_ii_form, partizip_ii_form AS partizipIIForm, "
-        "positive_form, positive_form AS positiveForm, comparative_form, comparative_form AS comparativeForm, "
-        "superlative_form, superlative_form AS superlativeForm, "
-        "created_at, last_reviewed_at, correct_answers, wrong_answers"
+        "w.id, NULL AS sync_id, NULL AS syncId, "
+        "w.german_word, w.normalized_german_word, w.article, w.part_of_speech, "
+        "w.native_translation, w.normalized_native_translation, "
+        "w.example_phrase_de, w.example_phrase_native, w.group_id, w.notes, "
+        "nf.plural_form, nf.plural_form AS pluralForm, "
+        "vf_praeteritum.form_value AS praeteritum_form, vf_praeteritum.form_value AS praeteritumForm, "
+        "vf_partizip.form_value AS partizip_ii_form, vf_partizip.form_value AS partizipIIForm, "
+        "af.positive_form, af.positive_form AS positiveForm, "
+        "af.comparative_form, af.comparative_form AS comparativeForm, "
+        "af.superlative_form, af.superlative_form AS superlativeForm, "
+        "w.created_at, w.updated_at, w.deleted_at, "
+        "rs.last_reviewed_at, COALESCE(rs.correct_answers, 0) AS correct_answers, "
+        "COALESCE(rs.wrong_answers, 0) AS wrong_answers, rs.ease_factor, rs.interval_days, rs.due_at"
         );
+}
+
+static QString wordFromClause()
+{
+    return QStringLiteral(R"(
+        words w
+        LEFT JOIN word_review_stats rs ON rs.word_id = w.id
+        LEFT JOIN noun_forms nf ON nf.word_id = w.id
+        LEFT JOIN adjective_forms af ON af.word_id = w.id
+        LEFT JOIN verb_forms vf_praeteritum
+               ON vf_praeteritum.word_id = w.id
+              AND vf_praeteritum.form_key = 'praeteritum_form'
+              AND vf_praeteritum.deleted_at IS NULL
+        LEFT JOIN verb_forms vf_partizip
+               ON vf_partizip.word_id = w.id
+              AND vf_partizip.form_key = 'partizip_ii_form'
+              AND vf_partizip.deleted_at IS NULL
+    )");
 }
 
 static qint64 nowUnix()
@@ -295,26 +313,75 @@ bool DLDatabaseManager::createTablesIfNeeded()
         {
             QStringLiteral(R"(
                 CREATE TABLE IF NOT EXISTS words (
-                    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
-                    sync_id               TEXT    NOT NULL UNIQUE,
-                    german_word           TEXT    NOT NULL,
-                    article               TEXT,
-                    part_of_speech        TEXT    DEFAULT 'Andere',
-                    native_translation    TEXT    NOT NULL,
-                    example_phrase_de     TEXT,
-                    example_phrase_native TEXT,
-                    group_id              INTEGER,
-                    plural_form           TEXT,
-                    praeteritum_form      TEXT,
-                    partizip_ii_form      TEXT,
-                    positive_form         TEXT,
-                    comparative_form      TEXT,
-                    superlative_form      TEXT,
-                    created_at            REAL    NOT NULL,
-                    last_reviewed_at      REAL,
-                    correct_answers       INTEGER DEFAULT 0,
-                    wrong_answers         INTEGER DEFAULT 0,
+                    id                            INTEGER PRIMARY KEY AUTOINCREMENT,
+                    german_word                   TEXT    NOT NULL,
+                    normalized_german_word        TEXT    NOT NULL,
+                    article                       TEXT,
+                    part_of_speech                TEXT    DEFAULT 'Andere',
+                    native_translation            TEXT    NOT NULL,
+                    normalized_native_translation TEXT    NOT NULL,
+                    example_phrase_de             TEXT,
+                    example_phrase_native         TEXT,
+                    group_id                      INTEGER,
+                    notes                         TEXT,
+                    created_at                    REAL    NOT NULL,
+                    updated_at                    REAL    NOT NULL,
+                    deleted_at                    REAL,
                     FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE SET NULL
+                );
+            )"),
+            {}
+        },
+        {
+            QStringLiteral(R"(
+                CREATE TABLE IF NOT EXISTS word_review_stats (
+                    word_id          INTEGER PRIMARY KEY,
+                    correct_answers  INTEGER NOT NULL DEFAULT 0,
+                    wrong_answers    INTEGER NOT NULL DEFAULT 0,
+                    last_reviewed_at REAL,
+                    ease_factor      REAL    NOT NULL DEFAULT 2.5,
+                    interval_days    INTEGER NOT NULL DEFAULT 0,
+                    due_at           REAL,
+                    updated_at       REAL    NOT NULL,
+                    FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
+                );
+            )"),
+            {}
+        },
+        {
+            QStringLiteral(R"(
+                CREATE TABLE IF NOT EXISTS verb_forms (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    word_id    INTEGER NOT NULL,
+                    form_key   TEXT    NOT NULL,
+                    form_value TEXT    NOT NULL,
+                    source     TEXT,
+                    created_at REAL    NOT NULL,
+                    updated_at REAL    NOT NULL,
+                    deleted_at REAL,
+                    FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
+                );
+            )"),
+            {}
+        },
+        {
+            QStringLiteral(R"(
+                CREATE TABLE IF NOT EXISTS adjective_forms (
+                    word_id          INTEGER PRIMARY KEY,
+                    positive_form    TEXT,
+                    comparative_form TEXT,
+                    superlative_form TEXT,
+                    FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
+                );
+            )"),
+            {}
+        },
+        {
+            QStringLiteral(R"(
+                CREATE TABLE IF NOT EXISTS noun_forms (
+                    word_id     INTEGER PRIMARY KEY,
+                    plural_form TEXT,
+                    FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE
                 );
             )"),
             {}
@@ -327,44 +394,46 @@ bool DLDatabaseManager::createTablesIfNeeded()
 bool DLDatabaseManager::migrateDatabaseIfNeeded()
 {
     QMutexLocker locker(&m_mutex);
-
-    if (!addColumnIfMissingNoLock(QStringLiteral("words"),
-                                  QStringLiteral("sync_id"),
-                                  QStringLiteral("sync_id TEXT"))) {
-        return false;
-    }
-
-    for (const QString& columnName : wordMetadataColumns()) {
-        if (!addColumnIfMissingNoLock(QStringLiteral("words"),
-                                      columnName,
-                                      columnName + QStringLiteral(" TEXT"))) {
-            return false;
-        }
-    }
-
-    return backfillMissingSyncIdsNoLock();
+    return migrateLegacyWordsNoLock();
 }
 
 bool DLDatabaseManager::createIndexesIfNeeded()
 {
     const QList<DLSqlCommand> commands = {
         {
-            QStringLiteral("CREATE INDEX IF NOT EXISTS idx_german_word ON words(german_word);"),
+            QStringLiteral("CREATE INDEX IF NOT EXISTS idx_words_german_word ON words(german_word);"),
             {}
         },
         {
-            QStringLiteral("CREATE INDEX IF NOT EXISTS idx_group_id ON words(group_id);"),
+            QStringLiteral("CREATE INDEX IF NOT EXISTS idx_words_normalized_german_word ON words(normalized_german_word);"),
             {}
         },
         {
-            QStringLiteral("CREATE UNIQUE INDEX IF NOT EXISTS idx_words_sync_id ON words(sync_id);"),
+            QStringLiteral("CREATE INDEX IF NOT EXISTS idx_words_group_id ON words(group_id);"),
             {}
         },
         {
             QStringLiteral(
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_word_unique "
-                "ON words(german_word, native_translation);"
+                "ON words(normalized_german_word, normalized_native_translation) "
+                "WHERE deleted_at IS NULL;"
                 ),
+            {}
+        },
+        {
+            QStringLiteral("CREATE INDEX IF NOT EXISTS idx_word_review_stats_due_at ON word_review_stats(due_at);"),
+            {}
+        },
+        {
+            QStringLiteral("CREATE INDEX IF NOT EXISTS idx_verb_forms_word_id ON verb_forms(word_id);"),
+            {}
+        },
+        {
+            QStringLiteral("CREATE UNIQUE INDEX IF NOT EXISTS idx_verb_forms_unique_active ON verb_forms(word_id, form_key) WHERE deleted_at IS NULL;"),
+            {}
+        },
+        {
+            QStringLiteral("CREATE INDEX IF NOT EXISTS idx_words_part_of_speech ON words(part_of_speech);"),
             {}
         }
     };
@@ -464,15 +533,15 @@ bool DLDatabaseManager::wordExistsNoLock(const QString& germanWord,
     QString sql;
 
     QVariantMap args = {
-        { QStringLiteral(":german_word"), germanWord },
-        { QStringLiteral(":native_translation"), nativeTranslation }
+        { QStringLiteral(":german_word"), normalizedText(germanWord) },
+        { QStringLiteral(":native_translation"), normalizedText(nativeTranslation) }
     };
 
     if (excludingId >= 0) {
         sql = QStringLiteral(
             "SELECT COUNT(*) FROM words "
-            "WHERE LOWER(german_word) = LOWER(:german_word) "
-            "AND LOWER(native_translation) = LOWER(:native_translation) "
+            "WHERE normalized_german_word = :german_word "
+            "AND normalized_native_translation = :native_translation "
             "AND id != :excluding_id;"
             );
 
@@ -480,8 +549,8 @@ bool DLDatabaseManager::wordExistsNoLock(const QString& germanWord,
     } else {
         sql = QStringLiteral(
             "SELECT COUNT(*) FROM words "
-            "WHERE LOWER(german_word) = LOWER(:german_word) "
-            "AND LOWER(native_translation) = LOWER(:native_translation);"
+            "WHERE normalized_german_word = :german_word "
+            "AND normalized_native_translation = :native_translation;"
             );
     }
 
@@ -511,6 +580,25 @@ bool DLDatabaseManager::columnExistsNoLock(const QString& tableName,
     return false;
 }
 
+bool DLDatabaseManager::tableExistsNoLock(const QString& tableName,
+                                          const QString& schemaName)
+{
+    QSqlQuery q(m_db);
+    const QString sql = schemaName.isEmpty()
+        ? QStringLiteral("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = :name;")
+        : QStringLiteral("SELECT COUNT(*) FROM %1.sqlite_master WHERE type = 'table' AND name = :name;").arg(schemaName);
+
+    q.prepare(sql);
+    q.bindValue(QStringLiteral(":name"), tableName);
+
+    if (!q.exec() || !q.next()) {
+        m_lastError = q.lastError().text();
+        return false;
+    }
+
+    return q.value(0).toInt() > 0;
+}
+
 bool DLDatabaseManager::addColumnIfMissingNoLock(const QString& tableName,
                                                  const QString& columnName,
                                                  const QString& definition)
@@ -524,27 +612,306 @@ bool DLDatabaseManager::addColumnIfMissingNoLock(const QString& tableName,
         );
 }
 
-bool DLDatabaseManager::backfillMissingSyncIdsNoLock(const QString& qualifiedTableName)
+bool DLDatabaseManager::migrateLegacyWordsNoLock()
 {
-    QSqlQuery selectQuery(m_db);
-    if (!selectQuery.exec(QStringLiteral("SELECT id FROM %1 WHERE sync_id IS NULL OR sync_id = '';").arg(qualifiedTableName))) {
-        m_lastError = selectQuery.lastError().text();
+    const bool hasCoreSchema = columnExistsNoLock(QStringLiteral("words"), QStringLiteral("normalized_german_word"))
+        && columnExistsNoLock(QStringLiteral("words"), QStringLiteral("normalized_native_translation"))
+        && columnExistsNoLock(QStringLiteral("words"), QStringLiteral("updated_at"))
+        && columnExistsNoLock(QStringLiteral("words"), QStringLiteral("deleted_at"))
+        && !columnExistsNoLock(QStringLiteral("words"), QStringLiteral("plural_form"))
+        && !columnExistsNoLock(QStringLiteral("words"), QStringLiteral("correct_answers"))
+        && !columnExistsNoLock(QStringLiteral("words"), QStringLiteral("sync_id"));
+
+    if (hasCoreSchema) {
+        return true;
+    }
+
+    const bool hasPluralForm = columnExistsNoLock(QStringLiteral("words"), QStringLiteral("plural_form"));
+    const bool hasPraeteritumForm = columnExistsNoLock(QStringLiteral("words"), QStringLiteral("praeteritum_form"));
+    const bool hasPartizipIIForm = columnExistsNoLock(QStringLiteral("words"), QStringLiteral("partizip_ii_form"));
+    const bool hasPositiveForm = columnExistsNoLock(QStringLiteral("words"), QStringLiteral("positive_form"));
+    const bool hasComparativeForm = columnExistsNoLock(QStringLiteral("words"), QStringLiteral("comparative_form"));
+    const bool hasSuperlativeForm = columnExistsNoLock(QStringLiteral("words"), QStringLiteral("superlative_form"));
+    const bool hasLastReviewedAt = columnExistsNoLock(QStringLiteral("words"), QStringLiteral("last_reviewed_at"));
+    const bool hasCorrectAnswers = columnExistsNoLock(QStringLiteral("words"), QStringLiteral("correct_answers"));
+    const bool hasWrongAnswers = columnExistsNoLock(QStringLiteral("words"), QStringLiteral("wrong_answers"));
+    const bool hasNotes = columnExistsNoLock(QStringLiteral("words"), QStringLiteral("notes"));
+    const bool hasUpdatedAt = columnExistsNoLock(QStringLiteral("words"), QStringLiteral("updated_at"));
+    const bool hasDeletedAt = columnExistsNoLock(QStringLiteral("words"), QStringLiteral("deleted_at"));
+    const bool hasNormalizedGerman = columnExistsNoLock(QStringLiteral("words"), QStringLiteral("normalized_german_word"));
+    const bool hasNormalizedNative = columnExistsNoLock(QStringLiteral("words"), QStringLiteral("normalized_native_translation"));
+
+    if (!executeSqlNoLock(QStringLiteral("PRAGMA foreign_keys = OFF;"))) {
         return false;
     }
 
-    QVariantList ids;
-    while (selectQuery.next()) {
-        ids.append(selectQuery.value(0));
+    if (!m_db.transaction()) {
+        m_lastError = m_db.lastError().text();
+        executeSqlNoLock(QStringLiteral("PRAGMA foreign_keys = ON;"));
+        return false;
     }
 
-    for (const QVariant& id : ids) {
-        QSqlQuery updateQuery(m_db);
-        updateQuery.prepare(QStringLiteral("UPDATE %1 SET sync_id = :sync_id WHERE id = :id;").arg(qualifiedTableName));
-        updateQuery.bindValue(QStringLiteral(":sync_id"), createSyncId());
-        updateQuery.bindValue(QStringLiteral(":id"), id);
+    const QList<DLSqlCommand> copyCommands = {
+        {
+            QStringLiteral(R"(
+                INSERT OR REPLACE INTO word_review_stats
+                    (word_id, correct_answers, wrong_answers, last_reviewed_at, ease_factor, interval_days, due_at, updated_at)
+                SELECT id,
+                       COALESCE(%1, 0),
+                       COALESCE(%2, 0),
+                       %3,
+                       2.5,
+                       0,
+                       NULL,
+                       COALESCE(%4, created_at)
+                FROM words;
+            )").arg(nullableColumnSql(QString(), QStringLiteral("correct_answers"), hasCorrectAnswers),
+                   nullableColumnSql(QString(), QStringLiteral("wrong_answers"), hasWrongAnswers),
+                   nullableColumnSql(QString(), QStringLiteral("last_reviewed_at"), hasLastReviewedAt),
+                   nullableColumnSql(QString(), QStringLiteral("updated_at"), hasUpdatedAt)),
+            {}
+        },
+        {
+            QStringLiteral(R"(
+                INSERT OR REPLACE INTO noun_forms (word_id, plural_form)
+                SELECT id, %2
+                FROM words
+                WHERE %1 AND TRIM(COALESCE(%2, '')) != '';
+            )").arg(hasPluralForm ? QStringLiteral("1") : QStringLiteral("0"),
+                   nullableColumnSql(QString(), QStringLiteral("plural_form"), hasPluralForm)),
+            {}
+        },
+        {
+            QStringLiteral(R"(
+                INSERT OR REPLACE INTO adjective_forms
+                    (word_id, positive_form, comparative_form, superlative_form)
+                SELECT id, %1, %2, %3
+                FROM words
+                WHERE TRIM(COALESCE(%1, '')) != ''
+                   OR TRIM(COALESCE(%2, '')) != ''
+                   OR TRIM(COALESCE(%3, '')) != '';
+            )").arg(nullableColumnSql(QString(), QStringLiteral("positive_form"), hasPositiveForm),
+                   nullableColumnSql(QString(), QStringLiteral("comparative_form"), hasComparativeForm),
+                   nullableColumnSql(QString(), QStringLiteral("superlative_form"), hasSuperlativeForm)),
+            {}
+        },
+        {
+            QStringLiteral(R"(
+                INSERT OR IGNORE INTO verb_forms
+                    (word_id, form_key, form_value, source, created_at, updated_at, deleted_at)
+                SELECT id, 'praeteritum_form', %3, 'user', created_at, COALESCE(%1, created_at), NULL
+                FROM words
+                WHERE %2 AND TRIM(COALESCE(%3, '')) != '';
+            )").arg(nullableColumnSql(QString(), QStringLiteral("updated_at"), hasUpdatedAt),
+                   hasPraeteritumForm ? QStringLiteral("1") : QStringLiteral("0"),
+                   nullableColumnSql(QString(), QStringLiteral("praeteritum_form"), hasPraeteritumForm)),
+            {}
+        },
+        {
+            QStringLiteral(R"(
+                INSERT OR IGNORE INTO verb_forms
+                    (word_id, form_key, form_value, source, created_at, updated_at, deleted_at)
+                SELECT id, 'partizip_ii_form', %3, 'user', created_at, COALESCE(%1, created_at), NULL
+                FROM words
+                WHERE %2 AND TRIM(COALESCE(%3, '')) != '';
+            )").arg(nullableColumnSql(QString(), QStringLiteral("updated_at"), hasUpdatedAt),
+                   hasPartizipIIForm ? QStringLiteral("1") : QStringLiteral("0"),
+                   nullableColumnSql(QString(), QStringLiteral("partizip_ii_form"), hasPartizipIIForm)),
+            {}
+        },
+        {
+            QStringLiteral(R"(
+                CREATE TABLE words_new (
+                    id                            INTEGER PRIMARY KEY AUTOINCREMENT,
+                    german_word                   TEXT    NOT NULL,
+                    normalized_german_word        TEXT    NOT NULL,
+                    article                       TEXT,
+                    part_of_speech                TEXT    DEFAULT 'Andere',
+                    native_translation            TEXT    NOT NULL,
+                    normalized_native_translation TEXT    NOT NULL,
+                    example_phrase_de             TEXT,
+                    example_phrase_native         TEXT,
+                    group_id                      INTEGER,
+                    notes                         TEXT,
+                    created_at                    REAL    NOT NULL,
+                    updated_at                    REAL    NOT NULL,
+                    deleted_at                    REAL,
+                    FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE SET NULL
+                );
+            )"),
+            {}
+        },
+        {
+            QStringLiteral(R"(
+                INSERT INTO words_new
+                    (id, german_word, normalized_german_word, article, part_of_speech,
+                     native_translation, normalized_native_translation, example_phrase_de,
+                     example_phrase_native, group_id, notes, created_at, updated_at, deleted_at)
+                SELECT id,
+                       german_word,
+                       COALESCE(NULLIF(%1, ''), LOWER(TRIM(german_word))),
+                       article,
+                       COALESCE(NULLIF(part_of_speech, ''), 'Andere'),
+                       native_translation,
+                       COALESCE(NULLIF(%2, ''), LOWER(TRIM(native_translation))),
+                       example_phrase_de,
+                       example_phrase_native,
+                       group_id,
+                       %3,
+                       created_at,
+                       COALESCE(%4, created_at),
+                       %5
+                FROM words;
+            )").arg(nullableColumnSql(QString(), QStringLiteral("normalized_german_word"), hasNormalizedGerman),
+                   nullableColumnSql(QString(), QStringLiteral("normalized_native_translation"), hasNormalizedNative),
+                   nullableColumnSql(QString(), QStringLiteral("notes"), hasNotes),
+                   nullableColumnSql(QString(), QStringLiteral("updated_at"), hasUpdatedAt),
+                   nullableColumnSql(QString(), QStringLiteral("deleted_at"), hasDeletedAt)),
+            {}
+        },
+        {
+            QStringLiteral("DROP TABLE words;"),
+            {}
+        },
+        {
+            QStringLiteral("ALTER TABLE words_new RENAME TO words;"),
+            {}
+        }
+    };
 
-        if (!updateQuery.exec()) {
-            m_lastError = updateQuery.lastError().text();
+    if (!executeSqlBatchNoLock(copyCommands)) {
+        m_db.rollback();
+        executeSqlNoLock(QStringLiteral("PRAGMA foreign_keys = ON;"));
+        return false;
+    }
+
+    if (!m_db.commit()) {
+        m_lastError = m_db.lastError().text();
+        m_db.rollback();
+        executeSqlNoLock(QStringLiteral("PRAGMA foreign_keys = ON;"));
+        return false;
+    }
+
+    return executeSqlNoLock(QStringLiteral("PRAGMA foreign_keys = ON;"));
+}
+
+bool DLDatabaseManager::upsertWordReviewStatsNoLock(int wordId,
+                                                    int correctAnswers,
+                                                    int wrongAnswers,
+                                                    const QVariant& lastReviewedAt)
+{
+    return executeSqlNoLock(
+        QStringLiteral(R"(
+            INSERT INTO word_review_stats
+                (word_id, correct_answers, wrong_answers, last_reviewed_at, ease_factor, interval_days, due_at, updated_at)
+            VALUES
+                (:word_id, :correct_answers, :wrong_answers, :last_reviewed_at, 2.5, 0, NULL, :updated_at)
+            ON CONFLICT(word_id) DO UPDATE SET
+                correct_answers  = excluded.correct_answers,
+                wrong_answers    = excluded.wrong_answers,
+                last_reviewed_at = excluded.last_reviewed_at,
+                updated_at       = excluded.updated_at;
+        )"),
+        {
+            { QStringLiteral(":word_id"), wordId },
+            { QStringLiteral(":correct_answers"), correctAnswers },
+            { QStringLiteral(":wrong_answers"), wrongAnswers },
+            { QStringLiteral(":last_reviewed_at"), lastReviewedAt },
+            { QStringLiteral(":updated_at"), static_cast<double>(nowUnix()) }
+        }
+        );
+}
+
+bool DLDatabaseManager::saveWordFormsNoLock(int wordId,
+                                            const QString& pluralForm,
+                                            const QString& praeteritumForm,
+                                            const QString& partizipIIForm,
+                                            const QString& positiveForm,
+                                            const QString& comparativeForm,
+                                            const QString& superlativeForm)
+{
+    const double now = static_cast<double>(nowUnix());
+
+    if (pluralForm.trimmed().isEmpty()) {
+        if (!executeSqlNoLock(QStringLiteral("DELETE FROM noun_forms WHERE word_id = :word_id;"),
+                              {{ QStringLiteral(":word_id"), wordId }})) {
+            return false;
+        }
+    } else if (!executeSqlNoLock(
+                   QStringLiteral(R"(
+                       INSERT INTO noun_forms (word_id, plural_form)
+                       VALUES (:word_id, :plural_form)
+                       ON CONFLICT(word_id) DO UPDATE SET plural_form = excluded.plural_form;
+                   )"),
+                   {
+                       { QStringLiteral(":word_id"), wordId },
+                       { QStringLiteral(":plural_form"), pluralForm.trimmed() }
+                   })) {
+        return false;
+    }
+
+    const bool hasAdjectiveForms = !positiveForm.trimmed().isEmpty()
+        || !comparativeForm.trimmed().isEmpty()
+        || !superlativeForm.trimmed().isEmpty();
+
+    if (!hasAdjectiveForms) {
+        if (!executeSqlNoLock(QStringLiteral("DELETE FROM adjective_forms WHERE word_id = :word_id;"),
+                              {{ QStringLiteral(":word_id"), wordId }})) {
+            return false;
+        }
+    } else if (!executeSqlNoLock(
+                   QStringLiteral(R"(
+                       INSERT INTO adjective_forms
+                           (word_id, positive_form, comparative_form, superlative_form)
+                       VALUES
+                           (:word_id, :positive_form, :comparative_form, :superlative_form)
+                       ON CONFLICT(word_id) DO UPDATE SET
+                           positive_form    = excluded.positive_form,
+                           comparative_form = excluded.comparative_form,
+                           superlative_form = excluded.superlative_form;
+                   )"),
+                   {
+                       { QStringLiteral(":word_id"), wordId },
+                       { QStringLiteral(":positive_form"), positiveForm.trimmed().isEmpty() ? nullVariant() : QVariant(positiveForm.trimmed()) },
+                       { QStringLiteral(":comparative_form"), comparativeForm.trimmed().isEmpty() ? nullVariant() : QVariant(comparativeForm.trimmed()) },
+                       { QStringLiteral(":superlative_form"), superlativeForm.trimmed().isEmpty() ? nullVariant() : QVariant(superlativeForm.trimmed()) }
+                   })) {
+        return false;
+    }
+
+    const QVariantMap verbForms = {
+        { QStringLiteral("praeteritum_form"), praeteritumForm.trimmed() },
+        { QStringLiteral("partizip_ii_form"), partizipIIForm.trimmed() }
+    };
+
+    for (auto it = verbForms.constBegin(); it != verbForms.constEnd(); ++it) {
+        if (!executeSqlNoLock(
+                QStringLiteral("DELETE FROM verb_forms WHERE word_id = :word_id AND form_key = :form_key;"),
+                {
+                    { QStringLiteral(":word_id"), wordId },
+                    { QStringLiteral(":form_key"), it.key() }
+                })) {
+            return false;
+        }
+
+        if (it.value().toString().isEmpty()) {
+            continue;
+        }
+
+        if (!executeSqlNoLock(
+                       QStringLiteral(R"(
+                           INSERT INTO verb_forms
+                               (word_id, form_key, form_value, source, created_at, updated_at, deleted_at)
+                           VALUES
+                               (:word_id, :form_key, :form_value, 'user', :created_at, :updated_at, NULL);
+                       )"),
+                       {
+                           { QStringLiteral(":word_id"), wordId },
+                           { QStringLiteral(":form_key"), it.key() },
+                           { QStringLiteral(":form_value"), it.value() },
+                           { QStringLiteral(":created_at"), now },
+                           { QStringLiteral(":updated_at"), now }
+                       })) {
             return false;
         }
     }
@@ -574,27 +941,32 @@ bool DLDatabaseManager::createPhraseFromExampleNoLock(const QString& parentPartO
     QSqlQuery q(m_db);
     q.prepare(QStringLiteral(R"(
         INSERT INTO words
-            (sync_id, german_word, article, part_of_speech, native_translation,
+            (german_word, normalized_german_word, article, part_of_speech, native_translation,
+             normalized_native_translation,
              example_phrase_de, example_phrase_native, group_id,
-             created_at, correct_answers, wrong_answers)
+             notes, created_at, updated_at, deleted_at)
         VALUES
-            (:sync_id, :german_word, NULL, 'Phrase', :native_translation,
+            (:german_word, :normalized_german_word, NULL, 'Phrase', :native_translation,
+             :normalized_native_translation,
              NULL, NULL, :group_id,
-             :created_at, 0, 0);
+             NULL, :created_at, :updated_at, NULL);
     )"));
 
-    q.bindValue(QStringLiteral(":sync_id"), createSyncId());
     q.bindValue(QStringLiteral(":german_word"), phraseGerman);
+    q.bindValue(QStringLiteral(":normalized_german_word"), normalizedText(phraseGerman));
     q.bindValue(QStringLiteral(":native_translation"), phraseNative);
+    q.bindValue(QStringLiteral(":normalized_native_translation"), normalizedText(phraseNative));
     q.bindValue(QStringLiteral(":group_id"), groupId >= 0 ? QVariant(groupId) : nullVariant());
-    q.bindValue(QStringLiteral(":created_at"), static_cast<double>(nowUnix()));
+    const double now = static_cast<double>(nowUnix());
+    q.bindValue(QStringLiteral(":created_at"), now);
+    q.bindValue(QStringLiteral(":updated_at"), now);
 
     if (!q.exec()) {
         m_lastError = q.lastError().text();
         return false;
     }
 
-    return true;
+    return upsertWordReviewStatsNoLock(static_cast<int>(q.lastInsertId().toLongLong()));
 }
 
 int DLDatabaseManager::insertWord(const QString& germanWord,
@@ -612,6 +984,8 @@ int DLDatabaseManager::insertWord(const QString& germanWord,
                                   const QString& comparativeForm,
                                   const QString& superlativeForm)
 {
+    Q_UNUSED(syncId);
+
     QMutexLocker locker(&m_mutex);
 
     if (wordExistsNoLock(germanWord, nativeTranslation)) {
@@ -628,34 +1002,29 @@ int DLDatabaseManager::insertWord(const QString& germanWord,
 
     q.prepare(QStringLiteral(R"(
         INSERT INTO words
-            (sync_id, german_word, article, part_of_speech, native_translation,
+            (german_word, normalized_german_word, article, part_of_speech, native_translation,
+             normalized_native_translation,
              example_phrase_de, example_phrase_native, group_id,
-             plural_form, praeteritum_form, partizip_ii_form,
-             positive_form, comparative_form, superlative_form,
-             created_at, correct_answers, wrong_answers)
+             notes, created_at, updated_at, deleted_at)
         VALUES
-            (:sync_id, :german_word, :article, :part_of_speech, :native_translation,
+            (:german_word, :normalized_german_word, :article, :part_of_speech, :native_translation,
+             :normalized_native_translation,
              :example_phrase_de, :example_phrase_native, :group_id,
-             :plural_form, :praeteritum_form, :partizip_ii_form,
-             :positive_form, :comparative_form, :superlative_form,
-             :created_at, 0, 0);
+             NULL, :created_at, :updated_at, NULL);
     )"));
 
-    q.bindValue(QStringLiteral(":sync_id"), syncId.isEmpty() ? createSyncId() : syncId);
     q.bindValue(QStringLiteral(":german_word"), germanWord);
+    q.bindValue(QStringLiteral(":normalized_german_word"), normalizedText(germanWord));
     q.bindValue(QStringLiteral(":article"), article.isEmpty() ? nullVariant() : QVariant(article));
     q.bindValue(QStringLiteral(":part_of_speech"), partOfSpeech.isEmpty() ? QStringLiteral("Andere") : partOfSpeech);
     q.bindValue(QStringLiteral(":native_translation"), nativeTranslation);
+    q.bindValue(QStringLiteral(":normalized_native_translation"), normalizedText(nativeTranslation));
     q.bindValue(QStringLiteral(":example_phrase_de"), examplePhraseDe.isEmpty() ? nullVariant() : QVariant(examplePhraseDe));
     q.bindValue(QStringLiteral(":example_phrase_native"), examplePhraseNative.isEmpty() ? nullVariant() : QVariant(examplePhraseNative));
     q.bindValue(QStringLiteral(":group_id"), groupId >= 0 ? QVariant(groupId) : nullVariant());
-    q.bindValue(QStringLiteral(":plural_form"), pluralForm.isEmpty() ? nullVariant() : QVariant(pluralForm));
-    q.bindValue(QStringLiteral(":praeteritum_form"), praeteritumForm.isEmpty() ? nullVariant() : QVariant(praeteritumForm));
-    q.bindValue(QStringLiteral(":partizip_ii_form"), partizipIIForm.isEmpty() ? nullVariant() : QVariant(partizipIIForm));
-    q.bindValue(QStringLiteral(":positive_form"), positiveForm.isEmpty() ? nullVariant() : QVariant(positiveForm));
-    q.bindValue(QStringLiteral(":comparative_form"), comparativeForm.isEmpty() ? nullVariant() : QVariant(comparativeForm));
-    q.bindValue(QStringLiteral(":superlative_form"), superlativeForm.isEmpty() ? nullVariant() : QVariant(superlativeForm));
-    q.bindValue(QStringLiteral(":created_at"), static_cast<double>(nowUnix()));
+    const double now = static_cast<double>(nowUnix());
+    q.bindValue(QStringLiteral(":created_at"), now);
+    q.bindValue(QStringLiteral(":updated_at"), now);
 
     if (!q.exec()) {
         m_lastError = q.lastError().text();
@@ -664,6 +1033,18 @@ int DLDatabaseManager::insertWord(const QString& germanWord,
     }
 
     const int newId = static_cast<int>(q.lastInsertId().toLongLong());
+
+    if (!upsertWordReviewStatsNoLock(newId)
+        || !saveWordFormsNoLock(newId,
+                                pluralForm,
+                                praeteritumForm,
+                                partizipIIForm,
+                                positiveForm,
+                                comparativeForm,
+                                superlativeForm)) {
+        m_db.rollback();
+        return -1;
+    }
 
     if (!createPhraseFromExampleNoLock(partOfSpeech, examplePhraseDe, examplePhraseNative, groupId)) {
         m_db.rollback();
@@ -695,6 +1076,8 @@ bool DLDatabaseManager::updateWord(int id,
                                    const QString& comparativeForm,
                                    const QString& superlativeForm)
 {
+    Q_UNUSED(syncId);
+
     QMutexLocker locker(&m_mutex);
 
     const QVariantMap currentWord = selectOneRowNoLock(
@@ -726,42 +1109,45 @@ bool DLDatabaseManager::updateWord(int id,
     const bool updateSuccess = executeSqlNoLock(
         QStringLiteral(R"(
             UPDATE words SET
-                german_word           = :german_word,
-                article               = :article,
-                part_of_speech        = :part_of_speech,
-                native_translation    = :native_translation,
-                example_phrase_de     = :example_phrase_de,
-                example_phrase_native = :example_phrase_native,
-                group_id              = :group_id,
-                sync_id               = COALESCE(NULLIF(:sync_id, ''), sync_id),
-                plural_form           = :plural_form,
-                praeteritum_form      = :praeteritum_form,
-                partizip_ii_form      = :partizip_ii_form,
-                positive_form         = :positive_form,
-                comparative_form      = :comparative_form,
-                superlative_form      = :superlative_form
+                german_word                   = :german_word,
+                normalized_german_word        = :normalized_german_word,
+                article                       = :article,
+                part_of_speech                = :part_of_speech,
+                native_translation            = :native_translation,
+                normalized_native_translation = :normalized_native_translation,
+                example_phrase_de             = :example_phrase_de,
+                example_phrase_native         = :example_phrase_native,
+                group_id                      = :group_id,
+                updated_at                    = :updated_at
             WHERE id = :id;
         )"),
         {
             { QStringLiteral(":id"), id },
             { QStringLiteral(":german_word"), germanWord },
+            { QStringLiteral(":normalized_german_word"), normalizedText(germanWord) },
             { QStringLiteral(":article"), article.isEmpty() ? nullVariant() : QVariant(article) },
             { QStringLiteral(":part_of_speech"), partOfSpeech.isEmpty() ? QStringLiteral("Andere") : QVariant(partOfSpeech) },
             { QStringLiteral(":native_translation"), nativeTranslation },
+            { QStringLiteral(":normalized_native_translation"), normalizedText(nativeTranslation) },
             { QStringLiteral(":example_phrase_de"), examplePhraseDe.isEmpty() ? nullVariant() : QVariant(examplePhraseDe) },
             { QStringLiteral(":example_phrase_native"), examplePhraseNative.isEmpty() ? nullVariant() : QVariant(examplePhraseNative) },
             { QStringLiteral(":group_id"), groupId >= 0 ? QVariant(groupId) : nullVariant() },
-            { QStringLiteral(":sync_id"), syncId },
-            { QStringLiteral(":plural_form"), pluralForm.isEmpty() ? nullVariant() : QVariant(pluralForm) },
-            { QStringLiteral(":praeteritum_form"), praeteritumForm.isEmpty() ? nullVariant() : QVariant(praeteritumForm) },
-            { QStringLiteral(":partizip_ii_form"), partizipIIForm.isEmpty() ? nullVariant() : QVariant(partizipIIForm) },
-            { QStringLiteral(":positive_form"), positiveForm.isEmpty() ? nullVariant() : QVariant(positiveForm) },
-            { QStringLiteral(":comparative_form"), comparativeForm.isEmpty() ? nullVariant() : QVariant(comparativeForm) },
-            { QStringLiteral(":superlative_form"), superlativeForm.isEmpty() ? nullVariant() : QVariant(superlativeForm) }
+            { QStringLiteral(":updated_at"), static_cast<double>(nowUnix()) }
         }
         );
 
     if (!updateSuccess) {
+        m_db.rollback();
+        return false;
+    }
+
+    if (!saveWordFormsNoLock(id,
+                             pluralForm,
+                             praeteritumForm,
+                             partizipIIForm,
+                             positiveForm,
+                             comparativeForm,
+                             superlativeForm)) {
         m_db.rollback();
         return false;
     }
@@ -793,7 +1179,7 @@ bool DLDatabaseManager::deleteWord(int id)
 QVariantMap DLDatabaseManager::fetchWordById(int id)
 {
     return selectOneRow(
-        QStringLiteral("SELECT %1 FROM words WHERE id = :id;").arg(wordSelectColumns()),
+        QStringLiteral("SELECT %1 FROM %2 WHERE w.id = :id;").arg(wordSelectColumns(), wordFromClause()),
         {
             { QStringLiteral(":id"), id }
         }
@@ -803,18 +1189,18 @@ QVariantMap DLDatabaseManager::fetchWordById(int id)
 QString DLDatabaseManager::sortClause(const QString& sortMode) const
 {
     if (sortMode == QStringLiteral("oldest")) {
-        return QStringLiteral("created_at ASC");
+        return QStringLiteral("w.created_at ASC");
     }
 
     if (sortMode == QStringLiteral("az")) {
-        return QStringLiteral("german_word ASC");
+        return QStringLiteral("w.german_word ASC");
     }
 
     if (sortMode == QStringLiteral("za")) {
-        return QStringLiteral("german_word DESC");
+        return QStringLiteral("w.german_word DESC");
     }
 
-    return QStringLiteral("created_at DESC");
+    return QStringLiteral("w.created_at DESC");
 }
 
 QVariantList DLDatabaseManager::fetchAllWords(const QString& sortMode,
@@ -822,13 +1208,13 @@ QVariantList DLDatabaseManager::fetchAllWords(const QString& sortMode,
 {
     QString sql = QStringLiteral(R"(
         SELECT %1
-        FROM words
-    )").arg(wordSelectColumns());
+        FROM %2
+    )").arg(wordSelectColumns(), wordFromClause());
 
     QVariantMap args;
 
     if (groupId >= 0) {
-        sql += QStringLiteral(" WHERE group_id = :group_id");
+        sql += QStringLiteral(" WHERE w.group_id = :group_id");
         args.insert(QStringLiteral(":group_id"), groupId);
     }
 
@@ -842,27 +1228,27 @@ QVariantList DLDatabaseManager::searchWords(const QString& query,
 {
     QString sql = QStringLiteral(R"(
         SELECT %1
-        FROM words
-        WHERE (german_word LIKE :pattern
-               OR native_translation LIKE :pattern
-               OR plural_form LIKE :pattern
-               OR praeteritum_form LIKE :pattern
-               OR partizip_ii_form LIKE :pattern
-               OR positive_form LIKE :pattern
-               OR comparative_form LIKE :pattern
-               OR superlative_form LIKE :pattern)
-    )").arg(wordSelectColumns());
+        FROM %2
+        WHERE (w.german_word LIKE :pattern
+               OR w.native_translation LIKE :pattern
+               OR nf.plural_form LIKE :pattern
+               OR vf_praeteritum.form_value LIKE :pattern
+               OR vf_partizip.form_value LIKE :pattern
+               OR af.positive_form LIKE :pattern
+               OR af.comparative_form LIKE :pattern
+               OR af.superlative_form LIKE :pattern)
+    )").arg(wordSelectColumns(), wordFromClause());
 
     QVariantMap args = {
         { QStringLiteral(":pattern"), QStringLiteral("%") + query + QStringLiteral("%") }
     };
 
     if (groupId >= 0) {
-        sql += QStringLiteral(" AND group_id = :group_id");
+        sql += QStringLiteral(" AND w.group_id = :group_id");
         args.insert(QStringLiteral(":group_id"), groupId);
     }
 
-    sql += QStringLiteral(" ORDER BY german_word;");
+    sql += QStringLiteral(" ORDER BY w.german_word;");
 
     return selectRows(sql, args);
 }
@@ -877,15 +1263,15 @@ QVariantList DLDatabaseManager::fetchRandomWords(int limit,
 {
     QString sql = QStringLiteral(R"(
         SELECT %1
-        FROM words
-    )").arg(wordSelectColumns());
+        FROM %2
+    )").arg(wordSelectColumns(), wordFromClause());
 
     QVariantMap args = {
         { QStringLiteral(":limit"), limit }
     };
 
     if (groupId >= 0) {
-        sql += QStringLiteral(" WHERE group_id = :group_id");
+        sql += QStringLiteral(" WHERE w.group_id = :group_id");
         args.insert(QStringLiteral(":group_id"), groupId);
     }
 
@@ -900,9 +1286,9 @@ QVariantList DLDatabaseManager::fetchTranslationQuizWords(int limit,
 {
     QString sql = QStringLiteral(R"(
         SELECT %1
-        FROM words
-        WHERE TRIM(COALESCE(native_translation, '')) != ''
-    )").arg(wordSelectColumns());
+        FROM %2
+        WHERE TRIM(COALESCE(w.native_translation, '')) != ''
+    )").arg(wordSelectColumns(), wordFromClause());
 
     QVariantMap args = {
         { QStringLiteral(":limit"), limit }
@@ -910,12 +1296,12 @@ QVariantList DLDatabaseManager::fetchTranslationQuizWords(int limit,
 
     const QString trimmedPartOfSpeech = partOfSpeech.trimmed();
     if (!trimmedPartOfSpeech.isEmpty() && trimmedPartOfSpeech != QStringLiteral("All")) {
-        sql += QStringLiteral(" AND part_of_speech = :part_of_speech");
+        sql += QStringLiteral(" AND w.part_of_speech = :part_of_speech");
         args.insert(QStringLiteral(":part_of_speech"), trimmedPartOfSpeech);
     }
 
     if (groupId >= 0) {
-        sql += QStringLiteral(" AND group_id = :group_id");
+        sql += QStringLiteral(" AND w.group_id = :group_id");
         args.insert(QStringLiteral(":group_id"), groupId);
     }
 
@@ -928,18 +1314,18 @@ QVariantList DLDatabaseManager::fetchNouns(int groupId)
 {
     QString sql = QStringLiteral(R"(
         SELECT %1
-        FROM words
-        WHERE article IN ('der', 'die', 'das')
-    )").arg(wordSelectColumns());
+        FROM %2
+        WHERE w.article IN ('der', 'die', 'das')
+    )").arg(wordSelectColumns(), wordFromClause());
 
     QVariantMap args;
 
     if (groupId >= 0) {
-        sql += QStringLiteral(" AND group_id = :group_id");
+        sql += QStringLiteral(" AND w.group_id = :group_id");
         args.insert(QStringLiteral(":group_id"), groupId);
     }
 
-    sql += QStringLiteral(" ORDER BY created_at DESC;");
+    sql += QStringLiteral(" ORDER BY w.created_at DESC;");
 
     return selectRows(sql, args);
 }
@@ -1012,10 +1398,14 @@ bool DLDatabaseManager::incrementCorrectAnswer(int wordId)
 {
     return executeSql(
         QStringLiteral(R"(
-            UPDATE words
-            SET correct_answers = correct_answers + 1,
-                last_reviewed_at = :last_reviewed_at
-            WHERE id = :id;
+            INSERT INTO word_review_stats
+                (word_id, correct_answers, wrong_answers, last_reviewed_at, ease_factor, interval_days, due_at, updated_at)
+            VALUES
+                (:id, 1, 0, :last_reviewed_at, 2.5, 0, NULL, :last_reviewed_at)
+            ON CONFLICT(word_id) DO UPDATE SET
+                correct_answers  = word_review_stats.correct_answers + 1,
+                last_reviewed_at = excluded.last_reviewed_at,
+                updated_at       = excluded.updated_at;
         )"),
         {
             { QStringLiteral(":id"), wordId },
@@ -1028,10 +1418,14 @@ bool DLDatabaseManager::incrementWrongAnswer(int wordId)
 {
     return executeSql(
         QStringLiteral(R"(
-            UPDATE words
-            SET wrong_answers = wrong_answers + 1,
-                last_reviewed_at = :last_reviewed_at
-            WHERE id = :id;
+            INSERT INTO word_review_stats
+                (word_id, correct_answers, wrong_answers, last_reviewed_at, ease_factor, interval_days, due_at, updated_at)
+            VALUES
+                (:id, 0, 1, :last_reviewed_at, 2.5, 0, NULL, :last_reviewed_at)
+            ON CONFLICT(word_id) DO UPDATE SET
+                wrong_answers    = word_review_stats.wrong_answers + 1,
+                last_reviewed_at = excluded.last_reviewed_at,
+                updated_at       = excluded.updated_at;
         )"),
         {
             { QStringLiteral(":id"), wordId },
@@ -1095,21 +1489,31 @@ bool DLDatabaseManager::importDatabaseMerge(const QString& sourceDatabasePath)
         return false;
     }
 
-    const bool sourceHasSyncId = columnExistsNoLock(QStringLiteral("words"), QStringLiteral("sync_id"), QStringLiteral("importdb"));
+    const bool sourceHasNormalizedGerman = columnExistsNoLock(QStringLiteral("words"), QStringLiteral("normalized_german_word"), QStringLiteral("importdb"));
+    const bool sourceHasNormalizedNative = columnExistsNoLock(QStringLiteral("words"), QStringLiteral("normalized_native_translation"), QStringLiteral("importdb"));
+    const bool sourceHasNotes = columnExistsNoLock(QStringLiteral("words"), QStringLiteral("notes"), QStringLiteral("importdb"));
+    const bool sourceHasUpdatedAt = columnExistsNoLock(QStringLiteral("words"), QStringLiteral("updated_at"), QStringLiteral("importdb"));
+    const bool sourceHasDeletedAt = columnExistsNoLock(QStringLiteral("words"), QStringLiteral("deleted_at"), QStringLiteral("importdb"));
+    const bool sourceHasReviewStats = tableExistsNoLock(QStringLiteral("word_review_stats"), QStringLiteral("importdb"));
+    const bool sourceHasNounForms = tableExistsNoLock(QStringLiteral("noun_forms"), QStringLiteral("importdb"));
+    const bool sourceHasVerbForms = tableExistsNoLock(QStringLiteral("verb_forms"), QStringLiteral("importdb"));
+    const bool sourceHasAdjectiveForms = tableExistsNoLock(QStringLiteral("adjective_forms"), QStringLiteral("importdb"));
+    const bool sourceHasLastReviewedAt = columnExistsNoLock(QStringLiteral("words"), QStringLiteral("last_reviewed_at"), QStringLiteral("importdb"));
+    const bool sourceHasCorrectAnswers = columnExistsNoLock(QStringLiteral("words"), QStringLiteral("correct_answers"), QStringLiteral("importdb"));
+    const bool sourceHasWrongAnswers = columnExistsNoLock(QStringLiteral("words"), QStringLiteral("wrong_answers"), QStringLiteral("importdb"));
     QVariantMap sourceHasMetadata;
     for (const QString& columnName : wordMetadataColumns()) {
         sourceHasMetadata.insert(columnName, columnExistsNoLock(QStringLiteral("words"), columnName, QStringLiteral("importdb")));
     }
 
-    const QString syncIdExpression = sourceHasSyncId
-        ? QStringLiteral("COALESCE(NULLIF(iw.sync_id, ''), ") + sqliteUuidExpression() + QStringLiteral(")")
-        : sqliteUuidExpression();
-    const QString pluralFormExpression = nullableTextValueSql(QStringLiteral("iw"), QStringLiteral("plural_form"), sourceHasMetadata.value(QStringLiteral("plural_form")).toBool());
-    const QString praeteritumFormExpression = nullableTextValueSql(QStringLiteral("iw"), QStringLiteral("praeteritum_form"), sourceHasMetadata.value(QStringLiteral("praeteritum_form")).toBool());
-    const QString partizipIIFormExpression = nullableTextValueSql(QStringLiteral("iw"), QStringLiteral("partizip_ii_form"), sourceHasMetadata.value(QStringLiteral("partizip_ii_form")).toBool());
-    const QString positiveFormExpression = nullableTextValueSql(QStringLiteral("iw"), QStringLiteral("positive_form"), sourceHasMetadata.value(QStringLiteral("positive_form")).toBool());
-    const QString comparativeFormExpression = nullableTextValueSql(QStringLiteral("iw"), QStringLiteral("comparative_form"), sourceHasMetadata.value(QStringLiteral("comparative_form")).toBool());
-    const QString superlativeFormExpression = nullableTextValueSql(QStringLiteral("iw"), QStringLiteral("superlative_form"), sourceHasMetadata.value(QStringLiteral("superlative_form")).toBool());
+    const QString sourceGermanKey = QStringLiteral("COALESCE(NULLIF(%1, ''), LOWER(TRIM(iw.german_word)))")
+        .arg(nullableColumnSql(QStringLiteral("iw"), QStringLiteral("normalized_german_word"), sourceHasNormalizedGerman));
+    const QString sourceNativeKey = QStringLiteral("COALESCE(NULLIF(%1, ''), LOWER(TRIM(iw.native_translation)))")
+        .arg(nullableColumnSql(QStringLiteral("iw"), QStringLiteral("normalized_native_translation"), sourceHasNormalizedNative));
+    const QString targetWordJoin = QStringLiteral(
+        "JOIN words tw ON tw.normalized_german_word = %1 "
+        "AND tw.normalized_native_translation = %2"
+        ).arg(sourceGermanKey, sourceNativeKey);
 
     QList<DLSqlCommand> commands = {
         {
@@ -1123,16 +1527,16 @@ bool DLDatabaseManager::importDatabaseMerge(const QString& sourceDatabasePath)
         {
             QStringLiteral(R"(
                 INSERT OR IGNORE INTO words
-                    (sync_id, german_word, article, part_of_speech, native_translation,
+                    (german_word, normalized_german_word, article, part_of_speech,
+                     native_translation, normalized_native_translation,
                      example_phrase_de, example_phrase_native, group_id,
-                     plural_form, praeteritum_form, partizip_ii_form,
-                     positive_form, comparative_form, superlative_form,
-                     created_at, last_reviewed_at, correct_answers, wrong_answers)
-                SELECT %1,
-                       iw.german_word,
+                     notes, created_at, updated_at, deleted_at)
+                SELECT iw.german_word,
+                       %1,
                        iw.article,
-                       iw.part_of_speech,
+                       COALESCE(NULLIF(iw.part_of_speech, ''), 'Andere'),
                        iw.native_translation,
+                       %2,
                        iw.example_phrase_de,
                        iw.example_phrase_native,
                        (
@@ -1142,27 +1546,166 @@ bool DLDatabaseManager::importDatabaseMerge(const QString& sourceDatabasePath)
                            WHERE ig.id = iw.group_id
                            LIMIT 1
                        ),
-                       %2,
                        %3,
-                       %4,
-                       %5,
-                       %6,
-                       %7,
                        iw.created_at,
-                       iw.last_reviewed_at,
-                       iw.correct_answers,
-                       iw.wrong_answers
+                       COALESCE(%4, iw.created_at),
+                       %5
                 FROM importdb.words iw;
-            )").arg(syncIdExpression,
-                   pluralFormExpression,
-                   praeteritumFormExpression,
-                   partizipIIFormExpression,
-                   positiveFormExpression,
-                   comparativeFormExpression,
-                   superlativeFormExpression),
+            )").arg(sourceGermanKey,
+                   sourceNativeKey,
+                   nullableColumnSql(QStringLiteral("iw"), QStringLiteral("notes"), sourceHasNotes),
+                   nullableColumnSql(QStringLiteral("iw"), QStringLiteral("updated_at"), sourceHasUpdatedAt),
+                   nullableColumnSql(QStringLiteral("iw"), QStringLiteral("deleted_at"), sourceHasDeletedAt)),
             {}
         }
     };
+
+    commands.append({
+        QStringLiteral(R"(
+            INSERT OR IGNORE INTO word_review_stats
+                (word_id, correct_answers, wrong_answers, last_reviewed_at, ease_factor, interval_days, due_at, updated_at)
+            SELECT tw.id,
+                   COALESCE(%1, 0),
+                   COALESCE(%2, 0),
+                   %3,
+                   COALESCE(%4, 2.5),
+                   COALESCE(%5, 0),
+                   %6,
+                   COALESCE(%7, iw.created_at)
+            FROM importdb.words iw
+            %8
+            %9;
+        )").arg(sourceHasReviewStats
+                   ? QStringLiteral("irs.correct_answers")
+                   : nullableColumnSql(QStringLiteral("iw"), QStringLiteral("correct_answers"), sourceHasCorrectAnswers),
+               sourceHasReviewStats
+                   ? QStringLiteral("irs.wrong_answers")
+                   : nullableColumnSql(QStringLiteral("iw"), QStringLiteral("wrong_answers"), sourceHasWrongAnswers),
+               sourceHasReviewStats
+                   ? QStringLiteral("irs.last_reviewed_at")
+                   : nullableColumnSql(QStringLiteral("iw"), QStringLiteral("last_reviewed_at"), sourceHasLastReviewedAt),
+               sourceHasReviewStats ? QStringLiteral("irs.ease_factor") : QStringLiteral("NULL"),
+               sourceHasReviewStats ? QStringLiteral("irs.interval_days") : QStringLiteral("NULL"),
+               sourceHasReviewStats ? QStringLiteral("irs.due_at") : QStringLiteral("NULL"),
+               sourceHasReviewStats
+                   ? QStringLiteral("irs.updated_at")
+                   : nullableColumnSql(QStringLiteral("iw"), QStringLiteral("updated_at"), sourceHasUpdatedAt),
+               targetWordJoin,
+               sourceHasReviewStats
+                   ? QStringLiteral("LEFT JOIN importdb.word_review_stats irs ON irs.word_id = iw.id")
+                   : QString()),
+        {}
+    });
+
+    if (sourceHasNounForms) {
+        commands.append({
+            QStringLiteral(R"(
+                INSERT OR IGNORE INTO noun_forms (word_id, plural_form)
+                SELECT tw.id, inf.plural_form
+                FROM importdb.words iw
+                %1
+                JOIN importdb.noun_forms inf ON inf.word_id = iw.id
+                WHERE TRIM(COALESCE(inf.plural_form, '')) != '';
+            )").arg(targetWordJoin),
+            {}
+        });
+    } else if (sourceHasMetadata.value(QStringLiteral("plural_form")).toBool()) {
+        commands.append({
+            QStringLiteral(R"(
+                INSERT OR IGNORE INTO noun_forms (word_id, plural_form)
+                SELECT tw.id, iw.plural_form
+                FROM importdb.words iw
+                %1
+                WHERE TRIM(COALESCE(iw.plural_form, '')) != '';
+            )").arg(targetWordJoin),
+            {}
+        });
+    }
+
+    if (sourceHasAdjectiveForms) {
+        commands.append({
+            QStringLiteral(R"(
+                INSERT OR IGNORE INTO adjective_forms
+                    (word_id, positive_form, comparative_form, superlative_form)
+                SELECT tw.id, iaf.positive_form, iaf.comparative_form, iaf.superlative_form
+                FROM importdb.words iw
+                %1
+                JOIN importdb.adjective_forms iaf ON iaf.word_id = iw.id
+                WHERE TRIM(COALESCE(iaf.positive_form, '')) != ''
+                   OR TRIM(COALESCE(iaf.comparative_form, '')) != ''
+                   OR TRIM(COALESCE(iaf.superlative_form, '')) != '';
+            )").arg(targetWordJoin),
+            {}
+        });
+    } else if (sourceHasMetadata.value(QStringLiteral("positive_form")).toBool()
+               || sourceHasMetadata.value(QStringLiteral("comparative_form")).toBool()
+               || sourceHasMetadata.value(QStringLiteral("superlative_form")).toBool()) {
+        commands.append({
+            QStringLiteral(R"(
+                INSERT OR IGNORE INTO adjective_forms
+                    (word_id, positive_form, comparative_form, superlative_form)
+                SELECT tw.id, %1, %2, %3
+                FROM importdb.words iw
+                %4
+                WHERE TRIM(COALESCE(%1, '')) != ''
+                   OR TRIM(COALESCE(%2, '')) != ''
+                   OR TRIM(COALESCE(%3, '')) != '';
+            )").arg(nullableColumnSql(QStringLiteral("iw"), QStringLiteral("positive_form"), sourceHasMetadata.value(QStringLiteral("positive_form")).toBool()),
+                   nullableColumnSql(QStringLiteral("iw"), QStringLiteral("comparative_form"), sourceHasMetadata.value(QStringLiteral("comparative_form")).toBool()),
+                   nullableColumnSql(QStringLiteral("iw"), QStringLiteral("superlative_form"), sourceHasMetadata.value(QStringLiteral("superlative_form")).toBool()),
+                   targetWordJoin),
+            {}
+        });
+    }
+
+    if (sourceHasVerbForms) {
+        commands.append({
+            QStringLiteral(R"(
+                INSERT OR IGNORE INTO verb_forms
+                    (word_id, form_key, form_value, source, created_at, updated_at, deleted_at)
+                SELECT tw.id, ivf.form_key, ivf.form_value, ivf.source,
+                       ivf.created_at, ivf.updated_at, ivf.deleted_at
+                FROM importdb.words iw
+                %1
+                JOIN importdb.verb_forms ivf ON ivf.word_id = iw.id
+                WHERE ivf.deleted_at IS NULL
+                  AND TRIM(COALESCE(ivf.form_value, '')) != '';
+            )").arg(targetWordJoin),
+            {}
+        });
+    } else {
+        if (sourceHasMetadata.value(QStringLiteral("praeteritum_form")).toBool()) {
+            commands.append({
+                QStringLiteral(R"(
+                    INSERT OR IGNORE INTO verb_forms
+                        (word_id, form_key, form_value, source, created_at, updated_at, deleted_at)
+                    SELECT tw.id, 'praeteritum_form', iw.praeteritum_form, 'user',
+                           iw.created_at, COALESCE(%1, iw.created_at), NULL
+                    FROM importdb.words iw
+                    %2
+                    WHERE TRIM(COALESCE(iw.praeteritum_form, '')) != '';
+                )").arg(nullableColumnSql(QStringLiteral("iw"), QStringLiteral("updated_at"), sourceHasUpdatedAt),
+                       targetWordJoin),
+                {}
+            });
+        }
+
+        if (sourceHasMetadata.value(QStringLiteral("partizip_ii_form")).toBool()) {
+            commands.append({
+                QStringLiteral(R"(
+                    INSERT OR IGNORE INTO verb_forms
+                        (word_id, form_key, form_value, source, created_at, updated_at, deleted_at)
+                    SELECT tw.id, 'partizip_ii_form', iw.partizip_ii_form, 'user',
+                           iw.created_at, COALESCE(%1, iw.created_at), NULL
+                    FROM importdb.words iw
+                    %2
+                    WHERE TRIM(COALESCE(iw.partizip_ii_form, '')) != '';
+                )").arg(nullableColumnSql(QStringLiteral("iw"), QStringLiteral("updated_at"), sourceHasUpdatedAt),
+                       targetWordJoin),
+                {}
+            });
+        }
+    }
 
     if (!executeSqlBatchNoLock(commands)) {
         m_db.rollback();
@@ -1184,6 +1727,22 @@ bool DLDatabaseManager::deleteAllData()
 {
     const QList<DLSqlCommand> commands = {
         {
+            QStringLiteral("DELETE FROM verb_forms;"),
+            {}
+        },
+        {
+            QStringLiteral("DELETE FROM adjective_forms;"),
+            {}
+        },
+        {
+            QStringLiteral("DELETE FROM noun_forms;"),
+            {}
+        },
+        {
+            QStringLiteral("DELETE FROM word_review_stats;"),
+            {}
+        },
+        {
             QStringLiteral("DELETE FROM words;"),
             {}
         },
@@ -1192,7 +1751,7 @@ bool DLDatabaseManager::deleteAllData()
             {}
         },
         {
-            QStringLiteral("DELETE FROM sqlite_sequence WHERE name IN ('words', 'groups');"),
+            QStringLiteral("DELETE FROM sqlite_sequence WHERE name IN ('words', 'groups', 'verb_forms');"),
             {}
         }
     };
