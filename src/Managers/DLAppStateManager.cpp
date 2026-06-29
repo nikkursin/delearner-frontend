@@ -6,6 +6,7 @@
 #include <QUrl>
 
 #include "DLDatabaseManager.h"
+#include "DLDatabaseExportService.h"
 #include "DLGroupService.h"
 #include "DLLogging.h"
 #include "DLQuizService.h"
@@ -202,6 +203,15 @@ bool DLAppStateManager::deleteWord(int id)
     return success;
 }
 
+bool DLAppStateManager::exportVocabularyDatabase()
+{
+    QString exportedPath;
+    QString error;
+    const bool success = DLDatabaseExportService().exportVocabularyDatabase(m_databasePath, &exportedPath, &error);
+    setLastError(success ? QString() : error);
+    return success;
+}
+
 bool DLAppStateManager::exportDatabase(const QString& targetPath)
 {
     const QString destinationPath = localPathFromUrlOrPath(targetPath);
@@ -211,29 +221,10 @@ bool DLAppStateManager::exportDatabase(const QString& targetPath)
         return false;
     }
 
-    QFileInfo destinationInfo(destinationPath);
-    QDir destinationDir = destinationInfo.absoluteDir();
-    if (!destinationDir.exists() && !destinationDir.mkpath(QStringLiteral("."))) {
-        setLastError(QStringLiteral("Unable to create export folder."));
-        qCWarning(dlApp) << "Database export failed: unable to create folder";
-        return false;
-    }
-
-    if (destinationInfo.exists() && !QFile::remove(destinationInfo.absoluteFilePath())) {
-        setLastError(QStringLiteral("Unable to replace the selected export file."));
-        qCWarning(dlApp) << "Database export failed: unable to replace destination";
-        return false;
-    }
-
-    qCInfo(dlApp) << "Exporting database";
-    if (!QFile::copy(m_databasePath, destinationInfo.absoluteFilePath())) {
-        setLastError(QStringLiteral("Unable to export database."));
-        qCWarning(dlApp) << "Database export failed while copying";
-        return false;
-    }
-
-    setLastError(QString());
-    return true;
+    QString error;
+    const bool success = DLDatabaseExportService().exportDatabaseToPath(m_databasePath, destinationPath, &error);
+    setLastError(success ? QString() : error);
+    return success;
 }
 
 bool DLAppStateManager::importDatabaseReplace(const QString& sourcePath)

@@ -3,6 +3,7 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import "../Components"
 
 DLAppPage {
     id: root
@@ -75,7 +76,7 @@ DLAppPage {
         dialogErrorMessage = ""
         selectedColor = colorOptions[0]
         groupNameField.text = ""
-        groupDialog.title = "New Group"
+        groupDialog.titleText = "New Group"
         groupDialog.open()
         groupNameField.forceActiveFocus()
     }
@@ -85,7 +86,7 @@ DLAppPage {
         dialogErrorMessage = ""
         selectedColor = groupColor(group)
         groupNameField.text = group.name || ""
-        groupDialog.title = "Edit Group"
+        groupDialog.titleText = "Edit Group"
         groupDialog.open()
         groupNameField.forceActiveFocus()
         groupNameField.selectAll()
@@ -132,18 +133,21 @@ DLAppPage {
         reloadGroups()
     }
 
-    Dialog {
+    DLCustomPopup {
         id: groupDialog
 
-        modal: true
-        closePolicy: Popup.CloseOnEscape
-        x: Math.max(18, Math.round((root.width - width) / 2))
-        y: Math.max(48, Math.round((root.height - height) / 3))
-        width: Math.min(root.width - 36, 380)
+        cardBg: root.cardBg
+        fieldBg: root.fieldBg
+        textMain: root.textMain
+        textMuted: root.textMuted
+        line: root.line
+        primaryColor: root.blue
+        destructiveColor: root.red
+        primaryText: "Save"
+        secondaryText: "Cancel"
+        onPrimaryClicked: root.saveGroup()
 
-        contentItem: ColumnLayout {
-            spacing: 14
-
+        customContent: [
             Text {
                 visible: root.dialogErrorMessage.length > 0
                 Layout.fillWidth: true
@@ -152,8 +156,7 @@ DLAppPage {
                 wrapMode: Text.WordWrap
                 font.pixelSize: 14
                 font.weight: Font.DemiBold
-            }
-
+            },
             FieldBlock {
                 label: "Name"
 
@@ -170,8 +173,7 @@ DLAppPage {
                     onTextChanged: if (root.dialogErrorMessage.length > 0) root.dialogErrorMessage = ""
                     onAccepted: root.saveGroup()
                 }
-            }
-
+            },
             FieldBlock {
                 label: "Color"
 
@@ -211,75 +213,29 @@ DLAppPage {
                     }
                 }
             }
-
-            RowLayout {
-                Layout.fillWidth: true
-                Layout.topMargin: 4
-                spacing: 10
-
-                Button {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 46
-                    text: "Cancel"
-                    font.pixelSize: 14
-                    font.weight: Font.Bold
-                    onClicked: groupDialog.close()
-
-                    contentItem: Text {
-                        text: parent.text
-                        color: root.textMuted
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                        font: parent.font
-                    }
-
-                    background: Rectangle {
-                        radius: 8
-                        color: root.fieldBg
-                        border.color: root.line
-                        border.width: 1
-                    }
-                }
-
-                Button {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 46
-                    text: "Save"
-                    font.pixelSize: 14
-                    font.weight: Font.ExtraBold
-                    onClicked: root.saveGroup()
-
-                    contentItem: Text {
-                        text: parent.text
-                        color: "white"
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                        font: parent.font
-                    }
-
-                    background: Rectangle {
-                        radius: 8
-                        color: root.blue
-                    }
-                }
-            }
-        }
+        ]
     }
 
-    Dialog {
+    DLCustomPopup {
         id: deleteGroupDialog
 
-        title: "Delete group?"
-        modal: true
-        standardButtons: Dialog.Cancel | Dialog.Ok
+        titleText: "Delete group?"
+        messageText: "This deletes \"" + root.pendingDeleteGroupName + "\". Words in this group will remain saved without a group."
+        primaryText: "Delete"
+        secondaryText: "Cancel"
+        destructive: true
+        cardBg: root.cardBg
+        fieldBg: root.fieldBg
+        textMain: root.textMain
+        textMuted: root.textMuted
+        line: root.line
+        primaryColor: root.blue
+        destructiveColor: root.red
 
-        Label {
-            width: Math.min(root.width - 72, 360)
-            text: "This deletes \"" + root.pendingDeleteGroupName + "\". Words in this group will remain saved without a group."
-            wrapMode: Text.WordWrap
+        onPrimaryClicked: {
+            root.deletePendingGroup()
+            deleteGroupDialog.close()
         }
-
-        onAccepted: root.deletePendingGroup()
     }
 
     Item {
@@ -446,13 +402,6 @@ DLAppPage {
             RowLayout {
                 Layout.alignment: Qt.AlignVCenter
                 spacing: 8
-
-                SmallActionButton {
-                    label: "View"
-                    textColor: root.blue
-                    backgroundColor: Qt.rgba(51 / 255, 127 / 255, 230 / 255, 0.10)
-                    onTriggered: appStateManager.goWordsPage()
-                }
 
                 SmallActionButton {
                     label: "Edit"

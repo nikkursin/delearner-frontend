@@ -4,6 +4,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Dialogs
 import QtQuick.Layouts
+import "../Components"
 
 DLAppPage {
     id: root
@@ -19,6 +20,7 @@ DLAppPage {
     property bool statusIsError: false
     property string pendingImportMode: ""
     property string selectedImportPath: ""
+    property string exportErrorMessage: ""
 
     readonly property color green: "#35a969"
     readonly property color greenSoft: Qt.rgba(53 / 255, 169 / 255, 105 / 255, 0.12)
@@ -78,11 +80,12 @@ DLAppPage {
         return (bytes / (1024 * 1024)).toFixed(1) + " MB"
     }
 
-    function exportDatabase(path) {
-        if (appStateManager.exportDatabase(path)) {
-            showStatus("Database exported.", false)
+    function exportDatabase() {
+        if (appStateManager.exportVocabularyDatabase()) {
+            showStatus("Database export ready.", false)
         } else {
-            showStatus(appStateManager.lastError || "Export failed.", true)
+            exportErrorMessage = appStateManager.lastError || "Export failed."
+            exportErrorDialog.open()
         }
     }
 
@@ -109,22 +112,11 @@ DLAppPage {
     }
 
     FileDialog {
-        id: exportDialog
-
-        title: "Export vocabulary database"
-        fileMode: FileDialog.SaveFile
-        nameFilters: [ "SQLite database (*.sqlite *.db)", "All files (*)" ]
-        defaultSuffix: "sqlite"
-
-        onAccepted: root.exportDatabase(selectedFile.toString())
-    }
-
-    FileDialog {
         id: importDialog
 
         title: root.pendingImportMode === "replace" ? "Import and replace" : "Import and merge"
         fileMode: FileDialog.OpenFile
-        nameFilters: [ "SQLite database (*.sqlite *.db)", "All files (*)" ]
+        nameFilters: [ "DE Vocab export (*.devocab)", "SQLite database (*.sqlite *.db)", "All files (*)" ]
 
         onAccepted: {
             root.selectedImportPath = selectedFile.toString()
@@ -168,27 +160,49 @@ DLAppPage {
         onAccepted: root.importDatabase(root.selectedImportPath, "merge")
     }
 
-    Dialog {
+    DLCustomPopup {
         id: deleteAllDialog
 
-        title: "Delete all data?"
-        modal: true
-        standardButtons: Dialog.Cancel | Dialog.Ok
+        titleText: "Delete all data?"
+        messageText: "This permanently deletes all saved vocabulary and groups."
+        primaryText: "Delete"
+        secondaryText: "Cancel"
+        destructive: true
+        cardBg: root.cardBg
+        fieldBg: root.fieldBg
+        textMain: root.textMain
+        textMuted: root.textMuted
+        line: root.line
+        primaryColor: root.blue
+        destructiveColor: root.red
 
-        Label {
-            width: Math.min(root.width - 72, 360)
-            text: "This permanently deletes all saved vocabulary and groups."
-            wrapMode: Text.WordWrap
-        }
-
-        onAccepted: {
+        onPrimaryClicked: {
             if (appStateManager.deleteAllData()) {
                 root.reloadStats()
                 root.showStatus("All vocabulary and groups deleted.", false)
             } else {
                 root.showStatus(appStateManager.lastError || "Delete failed.", true)
             }
+            deleteAllDialog.close()
         }
+    }
+
+    DLCustomPopup {
+        id: exportErrorDialog
+
+        titleText: "Export failed"
+        messageText: root.exportErrorMessage
+        primaryText: "OK"
+        showSecondaryButton: false
+        cardBg: root.cardBg
+        fieldBg: root.fieldBg
+        textMain: root.textMain
+        textMuted: root.textMuted
+        line: root.line
+        primaryColor: root.blue
+        destructiveColor: root.red
+
+        onPrimaryClicked: exportErrorDialog.close()
     }
 
     Item {
@@ -277,7 +291,7 @@ DLAppPage {
             iconText: "DB"
         }
     }
-    
+
     SettingsSectionCard {
         title: "Backup / Import / Export"
 
@@ -287,7 +301,7 @@ DLAppPage {
             iconText: "EX"
             buttonText: "Export"
 
-            onTriggered: exportDialog.open()
+            onTriggered: root.exportDatabase()
         }
 
         ActionRow {

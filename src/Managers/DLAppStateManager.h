@@ -73,6 +73,7 @@ public:
     Q_INVOKABLE int createWord(const QVariantMap& wordData);
     Q_INVOKABLE bool updateWord(int id, const QVariantMap& wordData);
     Q_INVOKABLE bool deleteWord(int id);
+    Q_INVOKABLE bool exportVocabularyDatabase();
     Q_INVOKABLE bool exportDatabase(const QString& targetPath);
     Q_INVOKABLE bool importDatabaseReplace(const QString& sourcePath);
     Q_INVOKABLE bool importDatabaseMerge(const QString& sourcePath);

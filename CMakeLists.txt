@@ -5,6 +5,10 @@ project(delearner VERSION 0.1 LANGUAGES CXX)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+if(IOS)
+    enable_language(OBJCXX)
+endif()
+
 find_package(Felgo REQUIRED)
 
 
@@ -90,9 +94,15 @@ qt_add_executable(delearner
     main.cpp
     src/Managers/DLAppStateManager.cpp
     src/Managers/DLAppStateManager.h
+    src/Services/DLDatabaseExportService.cpp
+    src/Services/DLDatabaseExportService.h
     ${QmlFiles}
     ${AssetsFiles}
 )
+
+if(IOS)
+    target_sources(delearner PRIVATE src/Services/DLDatabaseExportService_ios.mm)
+endif()
 
 felgo_configure_executable(delearner)
 
@@ -105,8 +115,8 @@ qt_add_qml_module(delearner
     URI delearner
     VERSION 1.0
 # uncomment for publishing:
-#    QML_FILES ${QmlFiles}
-#    RESOURCES ${AssetsFiles}
+    QML_FILES ${QmlFiles}
+    RESOURCES ${AssetsFiles}
     NO_RESOURCE_TARGET_PATH
 )
 
@@ -127,8 +137,18 @@ target_link_libraries(delearner PRIVATE Qt6::Core)
 target_link_libraries(delearner PRIVATE Qt6::Sql)
 target_link_libraries(delearner PRIVATE delearner_core)
 
-enable_testing()
-add_subdirectory(tests)
+if(IOS)
+    target_link_libraries(delearner PRIVATE "-framework UIKit")
+    set_target_properties(delearner PROPERTIES
+        MACOSX_BUNDLE TRUE
+        MACOSX_BUNDLE_GUI_IDENTIFIER ${PRODUCT_IDENTIFIER}
+        MACOSX_BUNDLE_BUNDLE_NAME "DE Learner"
+        MACOSX_BUNDLE_EXECUTABLE_NAME delearner
+    )
+endif()
+
+# enable_testing()
+# add_subdirectory(tests)
 
 # uncomment this line to add Felgo Hot Reload and use hot reloading with your custom C++ code
 # for the remaining steps see here: https://felgo.com/custom-code-reload-app/
