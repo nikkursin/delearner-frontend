@@ -36,7 +36,7 @@ App {
 
     // NavigationStack {
 
-    //     AppPage {
+    //     DLAppPage {
     //         title: qsTr("Main Page")
 
     //         navigationBarHidden: true
@@ -114,7 +114,8 @@ App {
               id: addEditWordPage
 
               DLAddEditWordPage {
-
+                  editMode: appStateManager.selectedWordId > 0
+                  wordId: appStateManager.selectedWordId > 0 ? appStateManager.selectedWordId.toString() : ""
               }
        }
 

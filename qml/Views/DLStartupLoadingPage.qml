@@ -7,7 +7,7 @@ Page {
 
     // ─── State ───────────────────────────────────────────────────────────────
     // Possible values: "loading" | "error"
-    property string state: "loading"
+    property string startupState: "loading"
     property string errorMessage: ""
 
     // Steps: each has a label and a status: "pending" | "active" | "done"
@@ -71,7 +71,7 @@ Page {
                 width: 126; height: 126
                 radius: 36
                 gradient: Gradient {
-                    orientation: Gradient.Diagonal
+                    orientation: Gradient.Vertical
                     GradientStop { position: 0.0; color: Qt.rgba(52/255,120/255,246/255,0.16) }
                     GradientStop { position: 1.0; color: Qt.rgba(52/255,120/255,246/255,0.06) }
                 }
@@ -146,7 +146,7 @@ Page {
                     // CSS-style spinning ring
                     Item {
                         width: 24; height: 24
-                        visible: root.state === "loading"
+                        visible: root.startupState === "loading"
 
                         Rectangle {
                             anchors.fill: parent
@@ -172,7 +172,7 @@ Page {
                             }
                         }
                         RotationAnimation on rotation {
-                            running: root.state === "loading"
+                            running: root.startupState === "loading"
                             from: 0; to: 360
                             duration: 900
                             loops: Animation.Infinite
@@ -180,8 +180,8 @@ Page {
                     }
 
                     Text {
-                        text: root.state === "loading" ? "Starting app..." : "Startup failed"
-                        color: root.state === "error" ? root.errorText : root.textMain
+                        text: root.startupState === "loading" ? "Starting app..." : "Startup failed"
+                        color: root.startupState === "error" ? root.errorText : root.textMain
                         font { pixelSize: 16; weight: Font.Bold }
                     }
                 }
@@ -228,7 +228,7 @@ Page {
         Rectangle {
             Layout.fillWidth: true
             Layout.topMargin: 14
-            visible: root.state === "error"
+            visible: root.startupState === "error"
             radius: 16
             color: root.errorBg
             implicitHeight: errorText.implicitHeight + 24

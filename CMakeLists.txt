@@ -5,6 +5,10 @@ project(delearner VERSION 0.1 LANGUAGES CXX)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+if(IOS)
+    enable_language(OBJCXX)
+endif()
+
 find_package(Felgo REQUIRED)
 
 
@@ -28,23 +32,77 @@ set(PRODUCT_LICENSE_KEY "")
 # )
 
 # Find all QML/JS files for the QML compiler:
-file(GLOB_RECURSE QmlFiles RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} qml/*.qml qml/*.js)
+file(GLOB_RECURSE QmlFiles CONFIGURE_DEPENDS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} qml/*.qml qml/*.js)
 
 # Find all non-QML/JS files in the qml and assets folder to add as resources:
-file(GLOB_RECURSE AssetsFiles RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} assets/* qml/*)
+file(GLOB_RECURSE AssetsFiles CONFIGURE_DEPENDS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} assets/* qml/*)
 list(REMOVE_ITEM AssetsFiles ${QmlFiles})
+list(APPEND AssetsFiles assets/icons/sort_words_icon.svg)
+list(REMOVE_DUPLICATES AssetsFiles)
 
-find_package(Qt6 REQUIRED COMPONENTS Core)
+find_package(Qt6 REQUIRED COMPONENTS Core Sql Test)
+
+set(DELEARNER_CORE_SOURCES
+    src/Logging/DLLogging.cpp
+    src/Logging/DLLogging.h
+    src/Managers/DLDatabaseManager.cpp
+    src/Managers/DLDatabaseManager.h
+    src/Repositories/DLGroupRepository.cpp
+    src/Repositories/DLGroupRepository.h
+    src/Repositories/DLQuizRepository.cpp
+    src/Repositories/DLQuizRepository.h
+    src/Repositories/DLReviewStatsRepository.cpp
+    src/Repositories/DLReviewStatsRepository.h
+    src/Repositories/DLWordRepository.cpp
+    src/Repositories/DLWordRepository.h
+    src/Services/DLDatabaseMaintenanceService.cpp
+    src/Services/DLDatabaseMaintenanceService.h
+    src/Services/DLGroupService.cpp
+    src/Services/DLGroupService.h
+    src/Services/DLQuizService.cpp
+    src/Services/DLQuizService.h
+    src/Services/DLQuizSession.cpp
+    src/Services/DLQuizSession.h
+    src/Services/DLWordService.cpp
+    src/Services/DLWordService.h
+    src/Models/DLModelMappers.cpp
+    src/Models/DLModelMappers.h
+    src/Models/DLQuizQuestion.h
+    src/Models/DLQuizResult.h
+    src/Models/DLWord.h
+    src/Models/DLWordForms.h
+    src/Models/DLWordGroup.h
+    src/Models/DLWordReviewStats.h
+)
+
+qt_add_library(delearner_core STATIC
+    ${DELEARNER_CORE_SOURCES}
+)
+
+target_include_directories(delearner_core
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Logging
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Managers
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Models
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Repositories
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Services
+)
+target_link_libraries(delearner_core PUBLIC Qt6::Core Qt6::Sql)
 
 qt_add_executable(delearner
     main.cpp
-    Managers/DLAppStateManager.cpp
-    Managers/DLAppStateManager.h
-    Managers/DLDatabaseManager.cpp
-    Managers/DLDatabaseManager.h
+    src/Managers/DLAppStateManager.cpp
+    src/Managers/DLAppStateManager.h
+    src/Services/DLDatabaseExportService.cpp
+    src/Services/DLDatabaseExportService.h
     ${QmlFiles}
     ${AssetsFiles}
 )
+
+if(IOS)
+    target_sources(delearner PRIVATE src/Services/DLDatabaseExportService_ios.mm)
+endif()
 
 felgo_configure_executable(delearner)
 
@@ -57,8 +115,8 @@ qt_add_qml_module(delearner
     URI delearner
     VERSION 1.0
 # uncomment for publishing:
-#    QML_FILES ${QmlFiles}
-#    RESOURCES ${AssetsFiles}
+    QML_FILES ${QmlFiles}
+    RESOURCES ${AssetsFiles}
     NO_RESOURCE_TARGET_PATH
 )
 
@@ -76,6 +134,21 @@ target_compile_definitions(delearner
 
 target_link_libraries(delearner PRIVATE Felgo)
 target_link_libraries(delearner PRIVATE Qt6::Core)
+target_link_libraries(delearner PRIVATE Qt6::Sql)
+target_link_libraries(delearner PRIVATE delearner_core)
+
+if(IOS)
+    target_link_libraries(delearner PRIVATE "-framework UIKit")
+    set_target_properties(delearner PROPERTIES
+        MACOSX_BUNDLE TRUE
+        MACOSX_BUNDLE_GUI_IDENTIFIER ${PRODUCT_IDENTIFIER}
+        MACOSX_BUNDLE_BUNDLE_NAME "DE Learner"
+        MACOSX_BUNDLE_EXECUTABLE_NAME delearner
+    )
+endif()
+
+# enable_testing()
+# add_subdirectory(tests)
 
 # uncomment this line to add Felgo Hot Reload and use hot reloading with your custom C++ code
 # for the remaining steps see here: https://felgo.com/custom-code-reload-app/

@@ -6,6 +6,9 @@
 #include <QScopedPointer>
 #include <QQmlContext>
 #include <QStandardPaths>
+#include <QDir>
+#include <QFileInfo>
+#include <QTimer>
 
 #include "Managers/DLAppStateManager.h"
 
@@ -21,12 +24,10 @@ int main(int argc, char *argv[])
     QQmlApplicationEngine engine;
     felgo.initialize(&engine);
 
-    QScopedPointer<DLAppStateManager> appStateManager(new DLAppStateManager(&engine));
+    QScopedPointer<DLAppStateManager> appStateManager(new DLAppStateManager());
     const QString dbPath =
         QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
         + "/delearner.sqlite";
-
-    appStateManager->init(dbPath);
 
     engine.rootContext()->setContextProperty(
         "appStateManager",
@@ -38,6 +39,8 @@ int main(int argc, char *argv[])
     felgo.setMainQmlFileName(QStringLiteral("qml/Main.qml"));
 
     engine.load(QUrl(felgo.mainQmlFileName()));
+
+    appStateManager->init(dbPath);
 
     return app.exec();
 }
