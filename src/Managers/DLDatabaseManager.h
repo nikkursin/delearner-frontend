@@ -40,6 +40,11 @@ public:
     QString lastError() const;
     void setLastError(const QString& error);
 
+    QString localDeviceId();
+    QVariantMap localDeviceIdentity();
+    bool setSyncStateValue(const QString& key, const QString& value);
+    QString syncStateValue(const QString& key, const QString& fallback = QString());
+
     bool executeSql(const QString& sql, const QVariantMap& args = {});
     bool executeSqlBatch(const QList<DLSqlCommand>& commands);
     int executeInsert(const QString& sql, const QVariantMap& args = {});
@@ -125,10 +130,13 @@ public:
     bool deleteAllData();
 
 private:
+    QString ensureDeviceIdentityLocked();
+
     mutable QMutex m_mutex;
     QSqlDatabase m_db;
     QString m_lastError;
     QString m_connectionName;
+    QString m_deviceId;
 };
 
 #endif // DLDATABASEMANAGER_H

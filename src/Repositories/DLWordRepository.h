@@ -32,7 +32,7 @@ private:
     QString sortClause(const QString& sortMode) const;
     QList<DLWord> fetchWords(const QString& sql, const QVariantMap& args);
     bool saveForms(QSqlDatabase& db, QString* error, int wordId, const DLWord& word);
-    bool createPhraseFromExample(QSqlDatabase& db, QString* error, const DLWord& word, int localWordId);
+    bool createPhraseFromExample(QSqlDatabase& db, QString* error, const DLWord& word, int localWordId, const QString& deviceId);
     bool bindAndExec(QSqlQuery& query, QString* error);
 
     DLDatabaseManager& m_database;

@@ -115,6 +115,31 @@ bool tableHasColumn(QSqlDatabase& db, const QString& tableName, const QString& c
     return query.value(0).toInt() > 0;
 }
 
+bool tableExists(QSqlDatabase& db, const QString& tableName, QString* error)
+{
+    if (error) {
+        error->clear();
+    }
+
+    QSqlQuery query(db);
+    if (!query.prepare(QStringLiteral("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = :table_name;"))) {
+        if (error) {
+            *error = query.lastError().text();
+        }
+        return false;
+    }
+
+    query.bindValue(QStringLiteral(":table_name"), tableName);
+    if (!query.exec() || !query.next()) {
+        if (error) {
+            *error = query.lastError().text();
+        }
+        return false;
+    }
+
+    return query.value(0).toInt() > 0;
+}
+
 bool execMigrationSql(QSqlDatabase& db, const QString& sql, QString* error, const QVariantMap& args = {})
 {
     QSqlQuery query(db);
@@ -218,6 +243,168 @@ bool addColumnIfMissing(QSqlDatabase& db,
                             error);
 }
 
+bool createSyncStateTable(QSqlDatabase& db, QString* error)
+{
+    return execMigrationSql(db,
+                            QStringLiteral(R"(
+                                CREATE TABLE IF NOT EXISTS sync_state (
+                                    key TEXT PRIMARY KEY,
+                                    value TEXT NOT NULL,
+                                    updated_at INTEGER NOT NULL
+                                );
+                            )"),
+                            error);
+}
+
+bool createDeviceIdentityTable(QSqlDatabase& db, QString* error)
+{
+    return execMigrationSql(db,
+                            QStringLiteral(R"(
+                                CREATE TABLE IF NOT EXISTS device_identity (
+                                    id TEXT PRIMARY KEY,
+                                    device_name TEXT,
+                                    created_at INTEGER NOT NULL,
+                                    last_seen_at INTEGER
+                                );
+                            )"),
+                            error);
+}
+
+bool migrateLocalIdentityAndSyncStateTables(QSqlDatabase& db, qint64 now, QString* error)
+{
+    QString migrationError;
+    const bool alreadyApplied = migrationAlreadyApplied(db, 2, &migrationError);
+    if (!migrationError.isEmpty()) {
+        if (error) {
+            *error = migrationError;
+        }
+        return false;
+    }
+    if (alreadyApplied) {
+        return true;
+    }
+
+    const bool syncStateExists = tableExists(db, QStringLiteral("sync_state"), error);
+    if (error && !error->isEmpty()) {
+        return false;
+    }
+    if (syncStateExists) {
+        const bool hasKey = tableHasColumn(db, QStringLiteral("sync_state"), QStringLiteral("key"), error);
+        if (error && !error->isEmpty()) {
+            return false;
+        }
+        const bool hasValue = tableHasColumn(db, QStringLiteral("sync_state"), QStringLiteral("value"), error);
+        if (error && !error->isEmpty()) {
+            return false;
+        }
+        const bool hasScope = tableHasColumn(db, QStringLiteral("sync_state"), QStringLiteral("scope"), error);
+        if (error && !error->isEmpty()) {
+            return false;
+        }
+
+        if (!hasKey || !hasValue || hasScope) {
+            const QString legacyTable = QStringLiteral("sync_state_legacy_%1").arg(now);
+            if (!execMigrationSql(db, QStringLiteral("ALTER TABLE sync_state RENAME TO %1;").arg(legacyTable), error)
+                || !createSyncStateTable(db, error)) {
+                return false;
+            }
+
+            if (hasScope) {
+                if (!execMigrationSql(db,
+                                      QStringLiteral(R"(
+                                          INSERT OR REPLACE INTO sync_state (key, value, updated_at)
+                                          SELECT COALESCE(NULLIF(TRIM(scope), ''), NULLIF(TRIM(id), '')),
+                                                 COALESCE(cursor, ''),
+                                                 COALESCE(updated_at, created_at, :now)
+                                          FROM %1
+                                          WHERE COALESCE(NULLIF(TRIM(scope), ''), NULLIF(TRIM(id), '')) IS NOT NULL
+                                            AND cursor IS NOT NULL;
+                                      )").arg(legacyTable),
+                                      error,
+                                      {{ QStringLiteral(":now"), now }})) {
+                    return false;
+                }
+            } else if (hasKey && hasValue) {
+                if (!execMigrationSql(db,
+                                      QStringLiteral(R"(
+                                          INSERT OR REPLACE INTO sync_state (key, value, updated_at)
+                                          SELECT key, value, COALESCE(updated_at, :now)
+                                          FROM %1
+                                          WHERE TRIM(COALESCE(key, '')) != ''
+                                            AND value IS NOT NULL;
+                                      )").arg(legacyTable),
+                                      error,
+                                      {{ QStringLiteral(":now"), now }})) {
+                    return false;
+                }
+            }
+
+            if (!execMigrationSql(db, QStringLiteral("DROP TABLE %1;").arg(legacyTable), error)) {
+                return false;
+            }
+        }
+    } else if (!createSyncStateTable(db, error)) {
+        return false;
+    }
+
+    const bool deviceIdentityExists = tableExists(db, QStringLiteral("device_identity"), error);
+    if (error && !error->isEmpty()) {
+        return false;
+    }
+    if (deviceIdentityExists) {
+        const bool hasDeviceName = tableHasColumn(db, QStringLiteral("device_identity"), QStringLiteral("device_name"), error);
+        if (error && !error->isEmpty()) {
+            return false;
+        }
+        const bool hasLastSeenAt = tableHasColumn(db, QStringLiteral("device_identity"), QStringLiteral("last_seen_at"), error);
+        if (error && !error->isEmpty()) {
+            return false;
+        }
+        const bool hasDeviceId = tableHasColumn(db, QStringLiteral("device_identity"), QStringLiteral("device_id"), error);
+        if (error && !error->isEmpty()) {
+            return false;
+        }
+        const bool hasDisplayName = tableHasColumn(db, QStringLiteral("device_identity"), QStringLiteral("display_name"), error);
+        if (error && !error->isEmpty()) {
+            return false;
+        }
+
+        if (!hasDeviceName || !hasLastSeenAt || hasDeviceId || hasDisplayName) {
+            const QString legacyTable = QStringLiteral("device_identity_legacy_%1").arg(now);
+            if (!execMigrationSql(db, QStringLiteral("ALTER TABLE device_identity RENAME TO %1;").arg(legacyTable), error)
+                || !createDeviceIdentityTable(db, error)) {
+                return false;
+            }
+
+            if (hasDeviceId) {
+                if (!execMigrationSql(db,
+                                      QStringLiteral(R"(
+                                          INSERT OR IGNORE INTO device_identity (id, device_name, created_at, last_seen_at)
+                                          SELECT COALESCE(NULLIF(TRIM(device_id), ''), NULLIF(TRIM(id), '')),
+                                                 %2,
+                                                 COALESCE(created_at, :now),
+                                                 COALESCE(updated_at, :now)
+                                          FROM %1
+                                          WHERE COALESCE(NULLIF(TRIM(device_id), ''), NULLIF(TRIM(id), '')) IS NOT NULL;
+                                      )").arg(legacyTable,
+                                             hasDisplayName ? QStringLiteral("display_name") : QStringLiteral("NULL")),
+                                      error,
+                                      {{ QStringLiteral(":now"), now }})) {
+                    return false;
+                }
+            }
+
+            if (!execMigrationSql(db, QStringLiteral("DROP TABLE %1;").arg(legacyTable), error)) {
+                return false;
+            }
+        }
+    } else if (!createDeviceIdentityTable(db, error)) {
+        return false;
+    }
+
+    return recordMigration(db, 2, QStringLiteral("local_device_identity_and_sync_state"), now, error);
+}
+
 void logSqlFailure(const char* operation,
                    const QString& sql,
                    const QVariantMap& args,
@@ -287,7 +474,11 @@ bool DLDatabaseManager::openDatabase(const QString& databasePath)
         }
     }
 
-    return createTablesIfNeeded() && migrateSchemaIfNeeded() && createIndexesIfNeeded();
+    if (!createTablesIfNeeded() || !migrateSchemaIfNeeded() || !createIndexesIfNeeded()) {
+        return false;
+    }
+
+    return !localDeviceId().isEmpty();
 }
 
 void DLDatabaseManager::closeDatabase()
@@ -303,6 +494,7 @@ void DLDatabaseManager::closeDatabase()
     if (!m_connectionName.isEmpty() && QSqlDatabase::contains(m_connectionName)) {
         QSqlDatabase::removeDatabase(m_connectionName);
     }
+    m_deviceId.clear();
 }
 
 bool DLDatabaseManager::createTablesIfNeeded()
@@ -418,31 +610,17 @@ bool DLDatabaseManager::createTablesIfNeeded()
         )"), {} },
         { QStringLiteral(R"(
             CREATE TABLE IF NOT EXISTS sync_state (
-                id TEXT PRIMARY KEY,
-                scope TEXT NOT NULL UNIQUE,
-                last_pull_at INTEGER,
-                last_push_at INTEGER,
-                cursor TEXT,
-                created_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL,
-                deleted_at INTEGER,
-                server_updated_at INTEGER,
-                server_version INTEGER NOT NULL DEFAULT 0,
-                device_id TEXT,
-                dirty INTEGER NOT NULL DEFAULT 0
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at INTEGER NOT NULL
             );
         )"), {} },
         { QStringLiteral(R"(
             CREATE TABLE IF NOT EXISTS device_identity (
                 id TEXT PRIMARY KEY,
-                device_id TEXT NOT NULL UNIQUE,
-                display_name TEXT,
+                device_name TEXT,
                 created_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL,
-                deleted_at INTEGER,
-                server_updated_at INTEGER,
-                server_version INTEGER NOT NULL DEFAULT 0,
-                dirty INTEGER NOT NULL DEFAULT 0
+                last_seen_at INTEGER
             );
         )"), {} },
         { QStringLiteral(R"(
@@ -496,7 +674,7 @@ bool DLDatabaseManager::migrateSchemaIfNeeded()
         }
 
         if (alreadyApplied) {
-            return true;
+            return migrateLocalIdentityAndSyncStateTables(db, now, error);
         }
 
         if (!addColumnIfMissing(db, QStringLiteral("groups"), QStringLiteral("sync_id"), QStringLiteral("TEXT"), error)
@@ -779,7 +957,8 @@ bool DLDatabaseManager::migrateSchemaIfNeeded()
             return false;
         }
 
-        if (!recordMigration(db, 1, QStringLiteral("sync_metadata_and_legacy_stats"), now, error)) {
+        if (!recordMigration(db, 1, QStringLiteral("sync_metadata_and_legacy_stats"), now, error)
+            || !migrateLocalIdentityAndSyncStateTables(db, now, error)) {
             return false;
         }
 
@@ -791,6 +970,10 @@ bool DLDatabaseManager::createIndexesIfNeeded()
 {
     qCDebug(dlDb) << "Creating database indexes if needed";
     const QList<DLSqlCommand> commands = {
+        { QStringLiteral("DROP TRIGGER IF EXISTS trg_sync_state_id_after_insert;"), {} },
+        { QStringLiteral("DROP TRIGGER IF EXISTS trg_device_identity_id_after_insert;"), {} },
+        { QStringLiteral("DROP INDEX IF EXISTS idx_sync_state_scope;"), {} },
+        { QStringLiteral("DROP INDEX IF EXISTS idx_device_identity_device_id;"), {} },
         { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_words_group_id ON words(group_id);"), {} },
         { QStringLiteral("CREATE UNIQUE INDEX IF NOT EXISTS idx_words_sync_id ON words(sync_id) WHERE sync_id IS NOT NULL;"), {} },
         { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_words_dirty ON words(dirty) WHERE dirty = 1;"), {} },
@@ -815,8 +998,6 @@ bool DLDatabaseManager::createIndexesIfNeeded()
         { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_app_settings_dirty ON app_settings(dirty) WHERE dirty = 1;"), {} },
         { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_app_settings_deleted_at ON app_settings(deleted_at);"), {} },
         { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_app_settings_server_updated_at ON app_settings(server_updated_at);"), {} },
-        { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_sync_state_scope ON sync_state(scope);"), {} },
-        { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_device_identity_device_id ON device_identity(device_id);"), {} },
         { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_outbound_sync_queue_record ON outbound_sync_queue(table_name, record_id);"), {} },
         { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_outbound_sync_queue_created_at ON outbound_sync_queue(created_at);"), {} },
         { QString(R"SQL(
@@ -868,26 +1049,6 @@ bool DLDatabaseManager::createIndexesIfNeeded()
             END;
         )SQL"), {} },
         { QString(R"SQL(
-            CREATE TRIGGER IF NOT EXISTS trg_sync_state_id_after_insert
-            AFTER INSERT ON sync_state
-            FOR EACH ROW
-            WHEN NEW.id IS NULL OR TRIM(NEW.id) = ''
-            BEGIN
-                UPDATE sync_state SET id = )SQL") + sqliteUuidExpression() + QString(R"SQL(
-                WHERE rowid = NEW.rowid;
-            END;
-        )SQL"), {} },
-        { QString(R"SQL(
-            CREATE TRIGGER IF NOT EXISTS trg_device_identity_id_after_insert
-            AFTER INSERT ON device_identity
-            FOR EACH ROW
-            WHEN NEW.id IS NULL OR TRIM(NEW.id) = ''
-            BEGIN
-                UPDATE device_identity SET id = )SQL") + sqliteUuidExpression() + QString(R"SQL(
-                WHERE rowid = NEW.rowid;
-            END;
-        )SQL"), {} },
-        { QString(R"SQL(
             CREATE TRIGGER IF NOT EXISTS trg_outbound_sync_queue_id_after_insert
             AFTER INSERT ON outbound_sync_queue
             FOR EACH ROW
@@ -918,6 +1079,64 @@ void DLDatabaseManager::setLastError(const QString& error)
 {
     QMutexLocker locker(&m_mutex);
     m_lastError = error;
+}
+
+QString DLDatabaseManager::localDeviceId()
+{
+    QMutexLocker locker(&m_mutex);
+    return ensureDeviceIdentityLocked();
+}
+
+QVariantMap DLDatabaseManager::localDeviceIdentity()
+{
+    const QString deviceId = localDeviceId();
+    if (deviceId.isEmpty()) {
+        return {};
+    }
+
+    return selectOneRow(
+        QStringLiteral(R"(
+            SELECT id, device_name, created_at, last_seen_at
+            FROM device_identity
+            WHERE id = :id;
+        )"),
+        {{ QStringLiteral(":id"), deviceId }});
+}
+
+bool DLDatabaseManager::setSyncStateValue(const QString& key, const QString& value)
+{
+    const QString trimmedKey = key.trimmed();
+    if (trimmedKey.isEmpty()) {
+        setLastError(QStringLiteral("Sync state key cannot be empty."));
+        return false;
+    }
+
+    return executeSql(
+        QStringLiteral(R"(
+            INSERT INTO sync_state (key, value, updated_at)
+            VALUES (:key, :value, :updated_at)
+            ON CONFLICT(key) DO UPDATE SET
+                value = excluded.value,
+                updated_at = excluded.updated_at;
+        )"),
+        {
+            { QStringLiteral(":key"), trimmedKey },
+            { QStringLiteral(":value"), value },
+            { QStringLiteral(":updated_at"), currentUnixTimeMs() }
+        });
+}
+
+QString DLDatabaseManager::syncStateValue(const QString& key, const QString& fallback)
+{
+    const QString trimmedKey = key.trimmed();
+    if (trimmedKey.isEmpty()) {
+        return fallback;
+    }
+
+    const QVariantMap row = selectOneRow(
+        QStringLiteral("SELECT value FROM sync_state WHERE key = :key;"),
+        {{ QStringLiteral(":key"), trimmedKey }});
+    return row.isEmpty() ? fallback : row.value(QStringLiteral("value")).toString();
 }
 
 bool DLDatabaseManager::executeSql(const QString& sql, const QVariantMap& args)
@@ -1123,6 +1342,80 @@ bool DLDatabaseManager::transaction(const std::function<bool(QSqlDatabase&, QStr
     return true;
 }
 
+QString DLDatabaseManager::ensureDeviceIdentityLocked()
+{
+    if (!m_deviceId.isEmpty()) {
+        return m_deviceId;
+    }
+
+    if (!m_db.isOpen()) {
+        m_lastError = QStringLiteral("Database is not open.");
+        return {};
+    }
+
+    const qint64 now = currentUnixTimeMs();
+    QSqlQuery query(m_db);
+    if (!query.prepare(QStringLiteral(R"(
+            SELECT id
+            FROM device_identity
+            WHERE TRIM(COALESCE(id, '')) != ''
+            ORDER BY created_at
+            LIMIT 1;
+        )"))) {
+        m_lastError = query.lastError().text();
+        logSqlFailure("deviceIdentity/select/prepare", QString(), {}, {}, {}, query.lastError());
+        return {};
+    }
+
+    if (!query.exec()) {
+        m_lastError = query.lastError().text();
+        logSqlFailure("deviceIdentity/select/exec", QStringLiteral("SELECT id FROM device_identity"), {}, {}, {}, query.lastError());
+        return {};
+    }
+
+    if (query.next()) {
+        m_deviceId = query.value(0).toString();
+
+        QSqlQuery update(m_db);
+        update.prepare(QStringLiteral("UPDATE device_identity SET last_seen_at = :last_seen_at WHERE id = :id;"));
+        update.bindValue(QStringLiteral(":last_seen_at"), now);
+        update.bindValue(QStringLiteral(":id"), m_deviceId);
+        if (!update.exec()) {
+            m_lastError = update.lastError().text();
+            logSqlFailure("deviceIdentity/updateLastSeen", QStringLiteral("UPDATE device_identity SET last_seen_at = :last_seen_at WHERE id = :id;"), {}, {}, {}, update.lastError());
+            m_deviceId.clear();
+            return {};
+        }
+
+        m_lastError.clear();
+        return m_deviceId;
+    }
+
+    const QString id = generateUuid();
+    const QString deviceName = QSysInfo::machineHostName().trimmed().isEmpty()
+        ? QSysInfo::prettyProductName()
+        : QSysInfo::machineHostName().trimmed();
+
+    QSqlQuery insert(m_db);
+    insert.prepare(QStringLiteral(R"(
+        INSERT INTO device_identity (id, device_name, created_at, last_seen_at)
+        VALUES (:id, :device_name, :created_at, :last_seen_at);
+    )"));
+    insert.bindValue(QStringLiteral(":id"), id);
+    insert.bindValue(QStringLiteral(":device_name"), deviceName.trimmed().isEmpty() ? nullVariant() : QVariant(deviceName));
+    insert.bindValue(QStringLiteral(":created_at"), now);
+    insert.bindValue(QStringLiteral(":last_seen_at"), now);
+    if (!insert.exec()) {
+        m_lastError = insert.lastError().text();
+        logSqlFailure("deviceIdentity/insert", QStringLiteral("INSERT INTO device_identity"), {}, {}, {}, insert.lastError());
+        return {};
+    }
+
+    m_deviceId = id;
+    m_lastError.clear();
+    return m_deviceId;
+}
+
 qint64 DLDatabaseManager::currentUnixTime()
 {
     return QDateTime::currentSecsSinceEpoch();
@@ -1135,13 +1428,7 @@ qint64 DLDatabaseManager::currentUnixTimeMs()
 
 QString DLDatabaseManager::currentDeviceId()
 {
-    static const QString deviceId = [] {
-        const QByteArray machineId = QSysInfo::machineUniqueId();
-        return machineId.isEmpty()
-            ? QStringLiteral("local-device")
-            : QString::fromLatin1(machineId.toHex());
-    }();
-    return deviceId;
+    return DLDatabaseManager::instance().localDeviceId();
 }
 
 QString DLDatabaseManager::generateUuid()
@@ -1353,5 +1640,10 @@ bool DLDatabaseManager::importDatabaseMerge(const QString& sourceDatabasePath)
 
 bool DLDatabaseManager::deleteAllData()
 {
-    return DLDatabaseMaintenanceService(*this).deleteAllData();
+    const bool success = DLDatabaseMaintenanceService(*this).deleteAllData();
+    if (success) {
+        QMutexLocker locker(&m_mutex);
+        m_deviceId.clear();
+    }
+    return success;
 }

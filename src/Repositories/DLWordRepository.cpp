@@ -97,9 +97,9 @@ QString DLWordRepository::insertWord(const DLWord& word)
 
     int newId = -1;
     const QString newSyncId = word.id.trimmed().isEmpty() ? DLDatabaseManager::generateUuid() : word.id.trimmed();
+    const QString deviceId = DLDatabaseManager::currentDeviceId();
     const bool ok = m_database.transaction([&](QSqlDatabase& db, QString* error) {
         const qint64 now = DLDatabaseManager::currentUnixTimeMs();
-        const QString deviceId = DLDatabaseManager::currentDeviceId();
         const QVariant resolvedGroupId = localGroupId(db, word.groupId, error);
         if (error && !error->isEmpty()) {
             return false;
@@ -166,7 +166,7 @@ QString DLWordRepository::insertWord(const DLWord& word)
 
         DLWord phraseCandidate = word;
         phraseCandidate.id = newSyncId;
-        return createPhraseFromExample(db, error, phraseCandidate, newId);
+        return createPhraseFromExample(db, error, phraseCandidate, newId, deviceId);
     });
 
     if (!ok) {
@@ -193,6 +193,7 @@ bool DLWordRepository::updateWord(const DLWord& word)
         return false;
     }
 
+    const QString deviceId = DLDatabaseManager::currentDeviceId();
     const bool success = m_database.transaction([&](QSqlDatabase& db, QString* error) {
         const int localId = localWordId(db, word.id, error);
         if ((error && !error->isEmpty()) || localId < 0) {
@@ -240,14 +241,14 @@ bool DLWordRepository::updateWord(const DLWord& word)
         query.bindValue(QStringLiteral(":plural_form"), pluralForm.trimmed().isEmpty() ? DLDatabaseManager::nullVariant() : QVariant(pluralForm.trimmed()));
         query.bindValue(QStringLiteral(":notes"), word.notes.trimmed().isEmpty() ? DLDatabaseManager::nullVariant() : QVariant(word.notes.trimmed()));
         query.bindValue(QStringLiteral(":updated_at"), DLDatabaseManager::currentUnixTimeMs());
-        query.bindValue(QStringLiteral(":device_id"), DLDatabaseManager::currentDeviceId());
+        query.bindValue(QStringLiteral(":device_id"), deviceId);
 
         if (!bindAndExec(query, error) || !saveForms(db, error, localId, word)) {
             return false;
         }
 
         const bool wasPhrase = current.partOfSpeech.compare(QStringLiteral("Phrase"), Qt::CaseInsensitive) == 0;
-        return wasPhrase ? true : createPhraseFromExample(db, error, word, localId);
+        return wasPhrase ? true : createPhraseFromExample(db, error, word, localId, deviceId);
     });
     if (!success) {
         qCWarning(dlRepo) << "Failed to update word" << word.id << ":" << m_database.lastError();
@@ -477,7 +478,7 @@ bool DLWordRepository::saveForms(QSqlDatabase& db, QString* error, int wordId, c
     return true;
 }
 
-bool DLWordRepository::createPhraseFromExample(QSqlDatabase& db, QString* error, const DLWord& word, int localWordId)
+bool DLWordRepository::createPhraseFromExample(QSqlDatabase& db, QString* error, const DLWord& word, int localWordId, const QString& deviceId)
 {
     Q_UNUSED(localWordId);
 
@@ -507,7 +508,6 @@ bool DLWordRepository::createPhraseFromExample(QSqlDatabase& db, QString* error,
 
     const qint64 now = DLDatabaseManager::currentUnixTimeMs();
     const QString phraseId = DLDatabaseManager::generateUuid();
-    const QString deviceId = DLDatabaseManager::currentDeviceId();
     const QVariant resolvedGroupId = localGroupId(db, word.groupId, error);
     if (error && !error->isEmpty()) {
         return false;

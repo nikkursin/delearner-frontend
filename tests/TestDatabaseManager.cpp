@@ -26,6 +26,8 @@ private slots:
     void missingNamedBindingFailsClearly();
     void invalidSelectSetsLastError();
     void openDatabaseMigratesLegacySchema();
+    void localDeviceIdentityIsCreatedOnceAndReused();
+    void syncStateStoresReservedValues();
     void deleteAllDataRemovesStoredData();
 
 private:
@@ -130,6 +132,29 @@ void TestDatabaseManager::createTablesIfNeededCreatesRequiredTables()
         QVERIFY2(columnExists(QStringLiteral("word_review_stats"), columnName),
                  qPrintable(QStringLiteral("Missing word_review_stats.%1").arg(columnName)));
     }
+
+    const QStringList syncStateColumns = {
+        QStringLiteral("key"),
+        QStringLiteral("value"),
+        QStringLiteral("updated_at")
+    };
+    for (const QString& columnName : syncStateColumns) {
+        QVERIFY2(columnExists(QStringLiteral("sync_state"), columnName),
+                 qPrintable(QStringLiteral("Missing sync_state.%1").arg(columnName)));
+    }
+    QCOMPARE(DLDatabaseManager::instance().selectInt(QStringLiteral("SELECT COUNT(*) FROM pragma_table_info('sync_state');")), 3);
+
+    const QStringList deviceIdentityColumns = {
+        QStringLiteral("id"),
+        QStringLiteral("device_name"),
+        QStringLiteral("created_at"),
+        QStringLiteral("last_seen_at")
+    };
+    for (const QString& columnName : deviceIdentityColumns) {
+        QVERIFY2(columnExists(QStringLiteral("device_identity"), columnName),
+                 qPrintable(QStringLiteral("Missing device_identity.%1").arg(columnName)));
+    }
+    QCOMPARE(DLDatabaseManager::instance().selectInt(QStringLiteral("SELECT COUNT(*) FROM pragma_table_info('device_identity');")), 4);
 }
 
 void TestDatabaseManager::createIndexesIfNeededCreatesExpectedIndexes()
@@ -158,8 +183,6 @@ void TestDatabaseManager::createIndexesIfNeededCreatesExpectedIndexes()
         QStringLiteral("idx_app_settings_dirty"),
         QStringLiteral("idx_app_settings_deleted_at"),
         QStringLiteral("idx_app_settings_server_updated_at"),
-        QStringLiteral("idx_sync_state_scope"),
-        QStringLiteral("idx_device_identity_device_id"),
         QStringLiteral("idx_outbound_sync_queue_record"),
         QStringLiteral("idx_outbound_sync_queue_created_at")
     };
@@ -358,8 +381,53 @@ void TestDatabaseManager::openDatabaseMigratesLegacySchema()
              1);
 }
 
+void TestDatabaseManager::localDeviceIdentityIsCreatedOnceAndReused()
+{
+    const QVariantMap identity = DLDatabaseManager::instance().localDeviceIdentity();
+    const QString firstDeviceId = identity.value(QStringLiteral("id")).toString();
+    QVERIFY(!firstDeviceId.isEmpty());
+    QCOMPARE(firstDeviceId.size(), 36);
+    QVERIFY(identity.value(QStringLiteral("created_at")).toLongLong() > 0);
+    QVERIFY(identity.value(QStringLiteral("last_seen_at")).toLongLong() > 0);
+    QCOMPARE(DLDatabaseManager::instance().selectInt(QStringLiteral("SELECT COUNT(*) FROM device_identity;")), 1);
+
+    DLDatabaseManager::instance().closeDatabase();
+    QVERIFY2(DLDatabaseManager::instance().openDatabase(m_dbPath),
+             qPrintable(DLDatabaseManager::instance().lastError()));
+
+    const QVariantMap reopenedIdentity = DLDatabaseManager::instance().localDeviceIdentity();
+    QCOMPARE(reopenedIdentity.value(QStringLiteral("id")).toString(), firstDeviceId);
+    QCOMPARE(DLDatabaseManager::instance().currentDeviceId(), firstDeviceId);
+    QCOMPARE(DLDatabaseManager::instance().selectInt(QStringLiteral("SELECT COUNT(*) FROM device_identity;")), 1);
+}
+
+void TestDatabaseManager::syncStateStoresReservedValues()
+{
+    QVERIFY2(DLDatabaseManager::instance().setSyncStateValue(QStringLiteral("lastPullCursor"), QStringLiteral("cursor-1")),
+             qPrintable(DLDatabaseManager::instance().lastError()));
+    QVERIFY2(DLDatabaseManager::instance().setSyncStateValue(QStringLiteral("lastSuccessfulSyncAt"), QStringLiteral("12345")),
+             qPrintable(DLDatabaseManager::instance().lastError()));
+    QVERIFY2(DLDatabaseManager::instance().setSyncStateValue(QStringLiteral("currentUserId"), QStringLiteral("user-1")),
+             qPrintable(DLDatabaseManager::instance().lastError()));
+    QVERIFY2(DLDatabaseManager::instance().setSyncStateValue(QStringLiteral("serverBaseUrl"), QStringLiteral("https://example.invalid")),
+             qPrintable(DLDatabaseManager::instance().lastError()));
+
+    QCOMPARE(DLDatabaseManager::instance().syncStateValue(QStringLiteral("lastPullCursor")), QStringLiteral("cursor-1"));
+    QCOMPARE(DLDatabaseManager::instance().syncStateValue(QStringLiteral("lastSuccessfulSyncAt")), QStringLiteral("12345"));
+    QCOMPARE(DLDatabaseManager::instance().syncStateValue(QStringLiteral("currentUserId")), QStringLiteral("user-1"));
+    QCOMPARE(DLDatabaseManager::instance().syncStateValue(QStringLiteral("serverBaseUrl")), QStringLiteral("https://example.invalid"));
+
+    QVERIFY2(DLDatabaseManager::instance().setSyncStateValue(QStringLiteral("lastPullCursor"), QStringLiteral("cursor-2")),
+             qPrintable(DLDatabaseManager::instance().lastError()));
+    QCOMPARE(DLDatabaseManager::instance().syncStateValue(QStringLiteral("lastPullCursor")), QStringLiteral("cursor-2"));
+    QCOMPARE(DLDatabaseManager::instance().selectInt(QStringLiteral("SELECT COUNT(*) FROM sync_state;")), 4);
+}
+
 void TestDatabaseManager::deleteAllDataRemovesStoredData()
 {
+    const QString originalDeviceId = DLDatabaseManager::instance().localDeviceId();
+    QVERIFY(!originalDeviceId.isEmpty());
+
     const QString groupId = DLDatabaseManager::instance().insertGroup(QStringLiteral("Basics"), QStringLiteral("#112233"));
     QVERIFY(!groupId.isEmpty());
 
@@ -378,6 +446,12 @@ void TestDatabaseManager::deleteAllDataRemovesStoredData()
     QCOMPARE(DLDatabaseManager::instance().getGroupCount(), 0);
     QCOMPARE(DLDatabaseManager::instance().getWordCount(), 0);
     QCOMPARE(DLDatabaseManager::instance().selectInt(QStringLiteral("SELECT COUNT(*) FROM word_review_stats;")), 0);
+    QCOMPARE(DLDatabaseManager::instance().selectInt(QStringLiteral("SELECT COUNT(*) FROM device_identity;")), 0);
+
+    const QString resetDeviceId = DLDatabaseManager::instance().localDeviceId();
+    QVERIFY(!resetDeviceId.isEmpty());
+    QVERIFY(resetDeviceId != originalDeviceId);
+    QCOMPARE(DLDatabaseManager::instance().selectInt(QStringLiteral("SELECT COUNT(*) FROM device_identity;")), 1);
 }
 
 QTEST_MAIN(TestDatabaseManager)
