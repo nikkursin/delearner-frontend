@@ -22,6 +22,7 @@ private slots:
     void incrementCorrectAnswerIncrementsCorrectCount();
     void incrementWrongAnswerIncrementsWrongCount();
     void lastReviewedAtIsUpdatedAfterAnswerIncrement();
+    void localStatsChangesSetDirty();
     void outboundQueueTracksReviewStatsChanges();
     void deletingWordRetainsReviewStatsForSync();
 
@@ -108,6 +109,42 @@ void TestReviewStatsRepository::lastReviewedAtIsUpdatedAfterAnswerIncrement()
     QVERIFY(stats.lastReviewedAt.isValid());
     QVERIFY(!stats.lastReviewedAt.isNull());
     QVERIFY(stats.lastReviewedAt.toLongLong() > 0);
+}
+
+void TestReviewStatsRepository::localStatsChangesSetDirty()
+{
+    const QString wordId = insertWord();
+    DLReviewStatsRepository repository(DLDatabaseManager::instance());
+
+    QCOMPARE(DLDatabaseManager::instance().selectInt(
+                 QStringLiteral(R"(
+                     SELECT rs.dirty
+                     FROM word_review_stats rs
+                     JOIN words w ON w.id = rs.word_id
+                     WHERE w.sync_id = :word_id;
+                 )"),
+                 {{ QStringLiteral(":word_id"), wordId }}),
+             1);
+
+    QVERIFY2(DLDatabaseManager::instance().executeSql(
+                 QStringLiteral(R"(
+                     UPDATE word_review_stats
+                     SET dirty = 0
+                     WHERE word_id = (SELECT id FROM words WHERE sync_id = :word_id);
+                 )"),
+                 {{ QStringLiteral(":word_id"), wordId }}),
+             qPrintable(DLDatabaseManager::instance().lastError()));
+
+    QVERIFY2(repository.incrementCorrectAnswer(wordId), qPrintable(DLDatabaseManager::instance().lastError()));
+    QCOMPARE(DLDatabaseManager::instance().selectInt(
+                 QStringLiteral(R"(
+                     SELECT rs.dirty
+                     FROM word_review_stats rs
+                     JOIN words w ON w.id = rs.word_id
+                     WHERE w.sync_id = :word_id;
+                 )"),
+                 {{ QStringLiteral(":word_id"), wordId }}),
+             1);
 }
 
 void TestReviewStatsRepository::outboundQueueTracksReviewStatsChanges()

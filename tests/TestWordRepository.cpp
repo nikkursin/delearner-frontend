@@ -22,6 +22,7 @@ private slots:
     void fetchWordByIdReturnsCorrectData();
     void updateWordChangesCoreFields();
     void deleteWordRemovesWord();
+    void localCrudSetsDirtyAndUsesSoftDelete();
     void outboundQueueTracksWordCrud();
     void duplicateDetectionUsesNormalizedWords();
     void duplicateDetectionAllowsDifferentTranslations();
@@ -90,6 +91,7 @@ void TestWordRepository::fetchWordByIdReturnsCorrectData()
     DLWordRepository repository(DLDatabaseManager::instance());
     DLWord original = word(QStringLiteral("Haus"), QStringLiteral("house"), QStringLiteral("Nomen"), QStringLiteral("das"));
     original.nounForms.pluralForm = QStringLiteral("Haeuser");
+    original.notes = QStringLiteral("Hidden learner note");
 
     const QString wordId = repository.insertWord(original);
     const DLWord fetched = repository.fetchWordById(wordId);
@@ -100,6 +102,7 @@ void TestWordRepository::fetchWordByIdReturnsCorrectData()
     QCOMPARE(fetched.partOfSpeech, original.partOfSpeech);
     QCOMPARE(fetched.article, original.article);
     QCOMPARE(fetched.nounForms.pluralForm, original.nounForms.pluralForm);
+    QCOMPARE(fetched.notes, original.notes);
 }
 
 void TestWordRepository::updateWordChangesCoreFields()
@@ -128,6 +131,46 @@ void TestWordRepository::deleteWordRemovesWord()
     QVERIFY2(repository.deleteWord(wordId), qPrintable(DLDatabaseManager::instance().lastError()));
     QVERIFY(repository.fetchWordById(wordId).id.isEmpty());
     QCOMPARE(repository.getWordCount(), 0);
+}
+
+void TestWordRepository::localCrudSetsDirtyAndUsesSoftDelete()
+{
+    DLWordRepository repository(DLDatabaseManager::instance());
+    const QString wordId = repository.insertWord(word(QStringLiteral("Haus"), QStringLiteral("house")));
+    QVERIFY2(!wordId.isEmpty(), qPrintable(DLDatabaseManager::instance().lastError()));
+
+    QVariantMap row = DLDatabaseManager::instance().selectOneRow(
+        QStringLiteral("SELECT dirty, deleted_at FROM words WHERE sync_id = :id;"),
+        {{ QStringLiteral(":id"), wordId }});
+    QCOMPARE(row.value(QStringLiteral("dirty")).toInt(), 1);
+    QVERIFY(row.value(QStringLiteral("deleted_at")).isNull());
+
+    QVERIFY2(DLDatabaseManager::instance().executeSql(
+                 QStringLiteral("UPDATE words SET dirty = 0 WHERE sync_id = :id;"),
+                 {{ QStringLiteral(":id"), wordId }}),
+             qPrintable(DLDatabaseManager::instance().lastError()));
+
+    DLWord update = word(QStringLiteral("Baum"), QStringLiteral("tree"));
+    update.id = wordId;
+    QVERIFY2(repository.updateWord(update), qPrintable(DLDatabaseManager::instance().lastError()));
+    QCOMPARE(DLDatabaseManager::instance().selectInt(
+                 QStringLiteral("SELECT dirty FROM words WHERE sync_id = :id;"),
+                 {{ QStringLiteral(":id"), wordId }}),
+             1);
+
+    QVERIFY2(DLDatabaseManager::instance().executeSql(
+                 QStringLiteral("UPDATE words SET dirty = 0 WHERE sync_id = :id;"),
+                 {{ QStringLiteral(":id"), wordId }}),
+             qPrintable(DLDatabaseManager::instance().lastError()));
+
+    QVERIFY2(repository.deleteWord(wordId), qPrintable(DLDatabaseManager::instance().lastError()));
+    row = DLDatabaseManager::instance().selectOneRow(
+        QStringLiteral("SELECT dirty, deleted_at FROM words WHERE sync_id = :id;"),
+        {{ QStringLiteral(":id"), wordId }});
+    QCOMPARE(row.value(QStringLiteral("dirty")).toInt(), 1);
+    QVERIFY(!row.value(QStringLiteral("deleted_at")).isNull());
+    QVERIFY(repository.fetchWordById(wordId).id.isEmpty());
+    QCOMPARE(repository.fetchAllWords().size(), 0);
 }
 
 void TestWordRepository::outboundQueueTracksWordCrud()

@@ -22,6 +22,7 @@ private slots:
     void fetchGroupByIdReturnsCorrectGroup();
     void updateGroupChangesNameAndColor();
     void deleteGroupRemovesGroup();
+    void localCrudSetsDirtyAndUsesSoftDelete();
     void outboundQueueTracksGroupCrud();
     void outboundQueueCanBeSuppressed();
     void wordCountPerGroupWorks();
@@ -118,6 +119,51 @@ void TestGroupRepository::deleteGroupRemovesGroup()
     QVERIFY2(repository.deleteGroup(groupId), qPrintable(DLDatabaseManager::instance().lastError()));
     QVERIFY(repository.fetchGroupById(groupId).id.isEmpty());
     QCOMPARE(repository.getGroupCount(), 0);
+}
+
+void TestGroupRepository::localCrudSetsDirtyAndUsesSoftDelete()
+{
+    DLGroupRepository repository(DLDatabaseManager::instance());
+    DLWordGroup group;
+    group.name = QStringLiteral("Basics");
+
+    const QString groupId = repository.insertGroup(group);
+    QVERIFY2(!groupId.isEmpty(), qPrintable(DLDatabaseManager::instance().lastError()));
+
+    QVariantMap row = DLDatabaseManager::instance().selectOneRow(
+        QStringLiteral("SELECT dirty, deleted_at FROM groups WHERE sync_id = :id;"),
+        {{ QStringLiteral(":id"), groupId }});
+    QCOMPARE(row.value(QStringLiteral("dirty")).toInt(), 1);
+    QVERIFY(row.value(QStringLiteral("deleted_at")).isNull());
+
+    QVERIFY2(DLDatabaseManager::instance().executeSql(
+                 QStringLiteral("UPDATE groups SET dirty = 0 WHERE sync_id = :id;"),
+                 {{ QStringLiteral(":id"), groupId }}),
+             qPrintable(DLDatabaseManager::instance().lastError()));
+
+    DLWordGroup update;
+    update.id = groupId;
+    update.name = QStringLiteral("Grammar");
+    update.colorHex = QStringLiteral("#445566");
+    QVERIFY2(repository.updateGroup(update), qPrintable(DLDatabaseManager::instance().lastError()));
+    QCOMPARE(DLDatabaseManager::instance().selectInt(
+                 QStringLiteral("SELECT dirty FROM groups WHERE sync_id = :id;"),
+                 {{ QStringLiteral(":id"), groupId }}),
+             1);
+
+    QVERIFY2(DLDatabaseManager::instance().executeSql(
+                 QStringLiteral("UPDATE groups SET dirty = 0 WHERE sync_id = :id;"),
+                 {{ QStringLiteral(":id"), groupId }}),
+             qPrintable(DLDatabaseManager::instance().lastError()));
+
+    QVERIFY2(repository.deleteGroup(groupId), qPrintable(DLDatabaseManager::instance().lastError()));
+    row = DLDatabaseManager::instance().selectOneRow(
+        QStringLiteral("SELECT dirty, deleted_at FROM groups WHERE sync_id = :id;"),
+        {{ QStringLiteral(":id"), groupId }});
+    QCOMPARE(row.value(QStringLiteral("dirty")).toInt(), 1);
+    QVERIFY(!row.value(QStringLiteral("deleted_at")).isNull());
+    QVERIFY(repository.fetchGroupById(groupId).id.isEmpty());
+    QCOMPARE(repository.fetchAllGroups().size(), 0);
 }
 
 void TestGroupRepository::outboundQueueTracksGroupCrud()
