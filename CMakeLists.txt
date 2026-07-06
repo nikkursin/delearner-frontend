@@ -147,8 +147,8 @@ if(IOS)
     )
 endif()
 
-# enable_testing()
-# add_subdirectory(tests)
+enable_testing()
+add_subdirectory(tests)
 
 # uncomment this line to add Felgo Hot Reload and use hot reloading with your custom C++ code
 # for the remaining steps see here: https://felgo.com/custom-code-reload-app/

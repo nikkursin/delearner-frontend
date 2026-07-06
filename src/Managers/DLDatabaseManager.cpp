@@ -146,6 +146,42 @@ bool execMigrationSql(QSqlDatabase& db, const QString& sql, QString* error, cons
     return true;
 }
 
+bool migrationAlreadyApplied(QSqlDatabase& db, int version, QString* error)
+{
+    QSqlQuery query(db);
+    if (!query.prepare(QStringLiteral("SELECT COUNT(*) FROM schema_migrations WHERE version = :version;"))) {
+        if (error) {
+            *error = query.lastError().text();
+        }
+        return false;
+    }
+
+    query.bindValue(QStringLiteral(":version"), version);
+    if (!query.exec() || !query.next()) {
+        if (error) {
+            *error = query.lastError().text();
+        }
+        return false;
+    }
+
+    return query.value(0).toInt() > 0;
+}
+
+bool recordMigration(QSqlDatabase& db, int version, const QString& name, qint64 appliedAt, QString* error)
+{
+    return execMigrationSql(db,
+                            QStringLiteral(R"(
+                                INSERT INTO schema_migrations (version, name, applied_at)
+                                VALUES (:version, :name, :applied_at);
+                            )"),
+                            error,
+                            {
+                                { QStringLiteral(":version"), version },
+                                { QStringLiteral(":name"), name },
+                                { QStringLiteral(":applied_at"), appliedAt }
+                            });
+}
+
 QString sqliteUuidExpression()
 {
     return QStringLiteral(R"(
@@ -271,6 +307,13 @@ bool DLDatabaseManager::createTablesIfNeeded()
 {
     qCDebug(dlDb) << "Creating database tables if needed";
     const QList<DLSqlCommand> commands = {
+        { QStringLiteral(R"(
+            CREATE TABLE IF NOT EXISTS schema_migrations (
+                version INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                applied_at INTEGER NOT NULL
+            );
+        )"), {} },
         { QStringLiteral(R"(
             CREATE TABLE IF NOT EXISTS groups (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -430,7 +473,32 @@ bool DLDatabaseManager::migrateSchemaIfNeeded()
         const qint64 now = DLDatabaseManager::currentUnixTime();
         const QString uuidExpression = sqliteUuidExpression();
 
+        if (!execMigrationSql(db, QStringLiteral(R"(
+                CREATE TABLE IF NOT EXISTS schema_migrations (
+                    version INTEGER PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    applied_at INTEGER NOT NULL
+                );
+            )"),
+            error)) {
+            return false;
+        }
+
+        QString migrationError;
+        const bool alreadyApplied = migrationAlreadyApplied(db, 1, &migrationError);
+        if (!migrationError.isEmpty()) {
+            if (error) {
+                *error = migrationError;
+            }
+            return false;
+        }
+
+        if (alreadyApplied) {
+            return true;
+        }
+
         if (!addColumnIfMissing(db, QStringLiteral("groups"), QStringLiteral("sync_id"), QStringLiteral("TEXT"), error)
+            || !addColumnIfMissing(db, QStringLiteral("groups"), QStringLiteral("created_at"), QStringLiteral("INTEGER NOT NULL DEFAULT 0"), error)
             || !addColumnIfMissing(db, QStringLiteral("groups"), QStringLiteral("updated_at"), QStringLiteral("INTEGER"), error)
             || !addColumnIfMissing(db, QStringLiteral("groups"), QStringLiteral("deleted_at"), QStringLiteral("INTEGER"), error)
             || !addColumnIfMissing(db, QStringLiteral("groups"), QStringLiteral("server_updated_at"), QStringLiteral("INTEGER"), error)
@@ -451,6 +519,8 @@ bool DLDatabaseManager::migrateSchemaIfNeeded()
         }
 
         if (!addColumnIfMissing(db, QStringLiteral("words"), QStringLiteral("sync_id"), QStringLiteral("TEXT"), error)
+            || !addColumnIfMissing(db, QStringLiteral("words"), QStringLiteral("created_at"), QStringLiteral("INTEGER NOT NULL DEFAULT 0"), error)
+            || !addColumnIfMissing(db, QStringLiteral("words"), QStringLiteral("updated_at"), QStringLiteral("INTEGER"), error)
             || !addColumnIfMissing(db, QStringLiteral("words"), QStringLiteral("plural_form"), QStringLiteral("TEXT"), error)
             || !addColumnIfMissing(db, QStringLiteral("words"), QStringLiteral("notes"), QStringLiteral("TEXT"), error)
             || !addColumnIfMissing(db, QStringLiteral("words"), QStringLiteral("deleted_at"), QStringLiteral("INTEGER"), error)
@@ -461,6 +531,10 @@ bool DLDatabaseManager::migrateSchemaIfNeeded()
             || !execMigrationSql(db,
                                  QStringLiteral("UPDATE words SET sync_id = %1 WHERE sync_id IS NULL OR TRIM(sync_id) = '';").arg(uuidExpression),
                                  error)
+            || !execMigrationSql(db,
+                                 QStringLiteral("UPDATE words SET updated_at = COALESCE(updated_at, created_at, :now) WHERE updated_at IS NULL;"),
+                                 error,
+                                 {{ QStringLiteral(":now"), now }})
             || !execMigrationSql(db,
                                  QStringLiteral(R"(
                                      UPDATE words
@@ -558,6 +632,152 @@ bool DLDatabaseManager::migrateSchemaIfNeeded()
             || !execMigrationSql(db,
                                  QStringLiteral("UPDATE word_review_stats SET server_version = COALESCE(server_version, 0), dirty = COALESCE(dirty, 1);"),
                                  error)) {
+            return false;
+        }
+
+        QString statsColumnError;
+        const bool wordsHaveCorrectAnswers = tableHasColumn(db, QStringLiteral("words"), QStringLiteral("correct_answers"), &statsColumnError);
+        if (!statsColumnError.isEmpty()) {
+            if (error) {
+                *error = statsColumnError;
+            }
+            return false;
+        }
+        const bool wordsHaveWrongAnswers = tableHasColumn(db, QStringLiteral("words"), QStringLiteral("wrong_answers"), &statsColumnError);
+        if (!statsColumnError.isEmpty()) {
+            if (error) {
+                *error = statsColumnError;
+            }
+            return false;
+        }
+        const bool wordsHaveLastReviewedAt = tableHasColumn(db, QStringLiteral("words"), QStringLiteral("last_reviewed_at"), &statsColumnError);
+        if (!statsColumnError.isEmpty()) {
+            if (error) {
+                *error = statsColumnError;
+            }
+            return false;
+        }
+
+        const QString correctAnswersExpression = wordsHaveCorrectAnswers
+            ? QStringLiteral("COALESCE(w.correct_answers, 0)")
+            : QStringLiteral("0");
+        const QString wrongAnswersExpression = wordsHaveWrongAnswers
+            ? QStringLiteral("COALESCE(w.wrong_answers, 0)")
+            : QStringLiteral("0");
+        const QString lastReviewedAtExpression = wordsHaveLastReviewedAt
+            ? QStringLiteral("w.last_reviewed_at")
+            : QStringLiteral("NULL");
+        const QString deletedAtExpression = tableHasColumn(db, QStringLiteral("words"), QStringLiteral("deleted_at"), &statsColumnError)
+            ? QStringLiteral("w.deleted_at")
+            : QStringLiteral("NULL");
+        if (!statsColumnError.isEmpty()) {
+            if (error) {
+                *error = statsColumnError;
+            }
+            return false;
+        }
+
+        if (!execMigrationSql(db,
+                              QStringLiteral(R"(
+                                  INSERT INTO word_review_stats
+                                      (word_id, sync_id, correct_answers, wrong_answers, last_reviewed_at,
+                                       ease_factor, interval_days, due_at, created_at, updated_at, deleted_at,
+                                       server_updated_at, server_version, device_id, dirty)
+                                  SELECT w.id,
+                                         %1,
+                                         %2,
+                                         %3,
+                                         %4,
+                                         2.5,
+                                         0,
+                                         NULL,
+                                         COALESCE(w.created_at, :now),
+                                         COALESCE(w.updated_at, w.created_at, :now),
+                                         %5,
+                                         NULL,
+                                         0,
+                                         NULL,
+                                         1
+                                  FROM words w
+                                  WHERE NOT EXISTS (
+                                      SELECT 1
+                                      FROM word_review_stats rs
+                                      WHERE rs.word_id = w.id
+                                  );
+                              )").arg(uuidExpression,
+                                      correctAnswersExpression,
+                                      wrongAnswersExpression,
+                                      lastReviewedAtExpression,
+                                      deletedAtExpression),
+                              error,
+                              {{ QStringLiteral(":now"), now }})) {
+            return false;
+        }
+
+        if (wordsHaveCorrectAnswers
+            && !execMigrationSql(db,
+                                 QStringLiteral(R"(
+                                     UPDATE word_review_stats
+                                     SET correct_answers = CASE
+                                             WHEN correct_answers = 0 THEN COALESCE((
+                                                 SELECT w.correct_answers
+                                                 FROM words w
+                                                 WHERE w.id = word_review_stats.word_id
+                                             ), correct_answers)
+                                             ELSE correct_answers
+                                         END
+                                     WHERE EXISTS (
+                                         SELECT 1
+                                         FROM words w
+                                         WHERE w.id = word_review_stats.word_id
+                                     );
+                                 )"),
+                                 error)) {
+            return false;
+        }
+
+        if (wordsHaveWrongAnswers
+            && !execMigrationSql(db,
+                                 QStringLiteral(R"(
+                                     UPDATE word_review_stats
+                                     SET wrong_answers = CASE
+                                             WHEN wrong_answers = 0 THEN COALESCE((
+                                                 SELECT w.wrong_answers
+                                                 FROM words w
+                                                 WHERE w.id = word_review_stats.word_id
+                                             ), wrong_answers)
+                                             ELSE wrong_answers
+                                         END
+                                     WHERE EXISTS (
+                                         SELECT 1
+                                         FROM words w
+                                         WHERE w.id = word_review_stats.word_id
+                                     );
+                                 )"),
+                                 error)) {
+            return false;
+        }
+
+        if (wordsHaveLastReviewedAt
+            && !execMigrationSql(db,
+                                 QStringLiteral(R"(
+                                     UPDATE word_review_stats
+                                     SET last_reviewed_at = COALESCE(last_reviewed_at, (
+                                         SELECT w.last_reviewed_at
+                                         FROM words w
+                                         WHERE w.id = word_review_stats.word_id
+                                     ))
+                                     WHERE EXISTS (
+                                         SELECT 1
+                                         FROM words w
+                                         WHERE w.id = word_review_stats.word_id
+                                     );
+                                 )"),
+                                 error)) {
+            return false;
+        }
+
+        if (!recordMigration(db, 1, QStringLiteral("sync_metadata_and_legacy_stats"), now, error)) {
             return false;
         }
 

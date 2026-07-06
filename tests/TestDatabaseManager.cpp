@@ -88,6 +88,7 @@ void TestDatabaseManager::createTablesIfNeededCreatesRequiredTables()
              qPrintable(DLDatabaseManager::instance().lastError()));
 
     const QStringList tables = {
+        QStringLiteral("schema_migrations"),
         QStringLiteral("groups"),
         QStringLiteral("words"),
         QStringLiteral("word_review_stats"),
@@ -262,8 +263,9 @@ void TestDatabaseManager::openDatabaseMigratesLegacySchema()
                 group_id INTEGER,
                 notes TEXT,
                 created_at REAL NOT NULL,
-                updated_at REAL NOT NULL,
-                deleted_at REAL
+                correct_answers INTEGER NOT NULL DEFAULT 0,
+                wrong_answers INTEGER NOT NULL DEFAULT 0,
+                last_reviewed_at REAL
             );
         )")));
         QVERIFY(query.exec(QStringLiteral(R"(
@@ -278,13 +280,14 @@ void TestDatabaseManager::openDatabaseMigratesLegacySchema()
                 deleted_at REAL
             );
         )")));
-        QVERIFY(query.exec(QStringLiteral("INSERT INTO groups (id, name, color_hex, created_at) VALUES (1, 'Basics', '#112233', 10);")));
+        QVERIFY(query.exec(QStringLiteral("INSERT INTO groups (id, name, color_hex, created_at) VALUES (1, 'Basics', '#112233', 7);")));
         QVERIFY(query.exec(QStringLiteral(R"(
             INSERT INTO words
                 (id, german_word, normalized_german_word, article, part_of_speech,
-                 native_translation, normalized_native_translation, group_id, created_at, updated_at, deleted_at)
+                 native_translation, normalized_native_translation, group_id, created_at,
+                 correct_answers, wrong_answers, last_reviewed_at)
             VALUES
-                (1, 'gehen', 'gehen', NULL, 'Verb', 'go', 'go', 1, 10, 10, NULL);
+                (1, 'gehen', 'gehen', NULL, 'Verb', 'go', 'go', 1, 10, 4, 2, 30);
         )")));
         QVERIFY(query.exec(QStringLiteral("INSERT INTO verb_forms (word_id, form_key, form_value, created_at, updated_at, deleted_at) VALUES (1, 'praeteritum', 'ging', 10, 10, NULL);")));
         QVERIFY(query.exec(QStringLiteral("INSERT INTO verb_forms (word_id, form_key, form_value, created_at, updated_at, deleted_at) VALUES (1, 'partizip_ii', 'gegangen', 10, 10, NULL);")));
@@ -298,14 +301,59 @@ void TestDatabaseManager::openDatabaseMigratesLegacySchema()
     const QVariantList groups = DLDatabaseManager::instance().fetchAllGroups();
     QCOMPARE(groups.size(), 1);
     QCOMPARE(groups.first().toMap().value(QStringLiteral("name")).toString(), QStringLiteral("Basics"));
-    QVERIFY(groups.first().toMap().value(QStringLiteral("updated_at")).toLongLong() > 0);
+    QCOMPARE(groups.first().toMap().value(QStringLiteral("updated_at")).toLongLong(), 7);
 
     const QVariantList words = DLDatabaseManager::instance().fetchAllWords(QStringLiteral("newest"), -1);
     QCOMPARE(words.size(), 1);
     const QVariantMap word = words.first().toMap();
     QCOMPARE(word.value(QStringLiteral("german_word")).toString(), QStringLiteral("gehen"));
+    QCOMPARE(word.value(QStringLiteral("group_id")).toInt(), 1);
+    QCOMPARE(word.value(QStringLiteral("updated_at")).toLongLong(), 10);
     QCOMPARE(word.value(QStringLiteral("praeteritum_form")).toString(), QStringLiteral("ging"));
     QCOMPARE(word.value(QStringLiteral("partizip_ii_form")).toString(), QStringLiteral("gegangen"));
+
+    const QVariantMap rawWord = DLDatabaseManager::instance().selectOneRow(
+        QStringLiteral("SELECT sync_id, created_at, updated_at, deleted_at, server_version, dirty FROM words WHERE id = 1;"));
+    QCOMPARE(rawWord.value(QStringLiteral("created_at")).toLongLong(), 10);
+    QCOMPARE(rawWord.value(QStringLiteral("updated_at")).toLongLong(), 10);
+    QVERIFY(rawWord.value(QStringLiteral("deleted_at")).isNull());
+    QCOMPARE(rawWord.value(QStringLiteral("server_version")).toInt(), 0);
+    QCOMPARE(rawWord.value(QStringLiteral("dirty")).toInt(), 1);
+    QVERIFY(!rawWord.value(QStringLiteral("sync_id")).toString().isEmpty());
+    QCOMPARE(rawWord.value(QStringLiteral("sync_id")).toString().size(), 36);
+
+    const QVariantMap rawGroup = DLDatabaseManager::instance().selectOneRow(
+        QStringLiteral("SELECT sync_id, created_at, updated_at, deleted_at, server_version, dirty FROM groups WHERE id = 1;"));
+    QCOMPARE(rawGroup.value(QStringLiteral("created_at")).toLongLong(), 7);
+    QCOMPARE(rawGroup.value(QStringLiteral("updated_at")).toLongLong(), 7);
+    QVERIFY(rawGroup.value(QStringLiteral("deleted_at")).isNull());
+    QCOMPARE(rawGroup.value(QStringLiteral("server_version")).toInt(), 0);
+    QCOMPARE(rawGroup.value(QStringLiteral("dirty")).toInt(), 1);
+    QVERIFY(!rawGroup.value(QStringLiteral("sync_id")).toString().isEmpty());
+    QCOMPARE(rawGroup.value(QStringLiteral("sync_id")).toString().size(), 36);
+
+    const QVariantMap stats = DLDatabaseManager::instance().selectOneRow(
+        QStringLiteral(R"(
+            SELECT sync_id, word_id, correct_answers, wrong_answers, last_reviewed_at,
+                   created_at, updated_at, deleted_at, server_version, dirty
+            FROM word_review_stats
+            WHERE word_id = 1;
+        )"));
+    QCOMPARE(stats.value(QStringLiteral("word_id")).toInt(), 1);
+    QCOMPARE(stats.value(QStringLiteral("correct_answers")).toInt(), 4);
+    QCOMPARE(stats.value(QStringLiteral("wrong_answers")).toInt(), 2);
+    QCOMPARE(stats.value(QStringLiteral("last_reviewed_at")).toLongLong(), 30);
+    QCOMPARE(stats.value(QStringLiteral("created_at")).toLongLong(), 10);
+    QCOMPARE(stats.value(QStringLiteral("updated_at")).toLongLong(), 10);
+    QVERIFY(stats.value(QStringLiteral("deleted_at")).isNull());
+    QCOMPARE(stats.value(QStringLiteral("server_version")).toInt(), 0);
+    QCOMPARE(stats.value(QStringLiteral("dirty")).toInt(), 1);
+    QVERIFY(!stats.value(QStringLiteral("sync_id")).toString().isEmpty());
+    QCOMPARE(stats.value(QStringLiteral("sync_id")).toString().size(), 36);
+
+    QCOMPARE(DLDatabaseManager::instance().selectInt(
+                 QStringLiteral("SELECT COUNT(*) FROM schema_migrations WHERE version = 1 AND name = 'sync_metadata_and_legacy_stats';")),
+             1);
 }
 
 void TestDatabaseManager::deleteAllDataRemovesStoredData()
