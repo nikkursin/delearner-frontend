@@ -10,7 +10,7 @@
 
 struct DLWord
 {
-    int id = -1;
+    QString id;
     QString germanWord;
     QString normalizedGermanWord;
     QString article;
@@ -19,11 +19,16 @@ struct DLWord
     QString normalizedNativeTranslation;
     QString examplePhraseDe;
     QString examplePhraseNative;
-    int groupId = -1;
+    QString groupId;
+    QString pluralForm;
     QString notes;
     qint64 createdAt = 0;
     qint64 updatedAt = 0;
     QVariant deletedAt;
+    QVariant serverUpdatedAt;
+    int serverVersion = 0;
+    QString deviceId;
+    bool dirty = true;
     DLWordReviewStats reviewStats;
     DLNounForms nounForms;
     DLVerbForms verbForms;

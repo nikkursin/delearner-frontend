@@ -27,7 +27,7 @@ private slots:
 private:
     QString m_dbPath;
 
-    int insertWord();
+    QString insertWord();
 };
 
 void TestReviewStatsRepository::init()
@@ -46,7 +46,7 @@ void TestReviewStatsRepository::cleanup()
     QFile::remove(m_dbPath);
 }
 
-int TestReviewStatsRepository::insertWord()
+QString TestReviewStatsRepository::insertWord()
 {
     DLWord word;
     word.germanWord = QStringLiteral("Haus");
@@ -58,8 +58,8 @@ int TestReviewStatsRepository::insertWord()
 
 void TestReviewStatsRepository::statsRowIsCreatedOrUpsertedForWord()
 {
-    const int wordId = insertWord();
-    QVERIFY(wordId > 0);
+    const QString wordId = insertWord();
+    QVERIFY(!wordId.isEmpty());
 
     DLReviewStatsRepository repository(DLDatabaseManager::instance());
     QCOMPARE(repository.fetchStats(wordId).wordId, wordId);
@@ -81,7 +81,7 @@ void TestReviewStatsRepository::statsRowIsCreatedOrUpsertedForWord()
 
 void TestReviewStatsRepository::incrementCorrectAnswerIncrementsCorrectCount()
 {
-    const int wordId = insertWord();
+    const QString wordId = insertWord();
     DLReviewStatsRepository repository(DLDatabaseManager::instance());
 
     QVERIFY2(repository.incrementCorrectAnswer(wordId), qPrintable(DLDatabaseManager::instance().lastError()));
@@ -90,7 +90,7 @@ void TestReviewStatsRepository::incrementCorrectAnswerIncrementsCorrectCount()
 
 void TestReviewStatsRepository::incrementWrongAnswerIncrementsWrongCount()
 {
-    const int wordId = insertWord();
+    const QString wordId = insertWord();
     DLReviewStatsRepository repository(DLDatabaseManager::instance());
 
     QVERIFY2(repository.incrementWrongAnswer(wordId), qPrintable(DLDatabaseManager::instance().lastError()));
@@ -99,7 +99,7 @@ void TestReviewStatsRepository::incrementWrongAnswerIncrementsWrongCount()
 
 void TestReviewStatsRepository::lastReviewedAtIsUpdatedAfterAnswerIncrement()
 {
-    const int wordId = insertWord();
+    const QString wordId = insertWord();
     DLReviewStatsRepository repository(DLDatabaseManager::instance());
 
     QVERIFY2(repository.incrementCorrectAnswer(wordId), qPrintable(DLDatabaseManager::instance().lastError()));
@@ -111,14 +111,19 @@ void TestReviewStatsRepository::lastReviewedAtIsUpdatedAfterAnswerIncrement()
 
 void TestReviewStatsRepository::deletingWordRetainsReviewStatsForSync()
 {
-    const int wordId = insertWord();
+    const QString wordId = insertWord();
     DLReviewStatsRepository stats(DLDatabaseManager::instance());
     DLWordRepository words(DLDatabaseManager::instance());
 
     QVERIFY(stats.incrementWrongAnswer(wordId));
     QVERIFY2(words.deleteWord(wordId), qPrintable(DLDatabaseManager::instance().lastError()));
     QCOMPARE(DLDatabaseManager::instance().selectInt(
-                 QStringLiteral("SELECT COUNT(*) FROM word_review_stats WHERE word_id = :word_id;"),
+                 QStringLiteral(R"(
+                     SELECT COUNT(*)
+                     FROM word_review_stats rs
+                     INNER JOIN words w ON w.id = rs.word_id
+                     WHERE w.sync_id = :word_id;
+                 )"),
                  {{ QStringLiteral(":word_id"), wordId }}),
              1);
 }

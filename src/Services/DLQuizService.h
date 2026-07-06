@@ -17,9 +17,9 @@ public:
     explicit DLQuizService(DLDatabaseManager& database);
 
     QVariantList availableQuizModes();
-    int availableQuizQuestionCount(const QString& type, int groupId = -1, const QString& partOfSpeech = QString());
-    bool canStartQuiz(const QString& type, int groupId = -1, int questionCount = 10, const QString& partOfSpeech = QString());
-    bool startQuiz(const QString& type, int groupId = -1, int questionCount = 10, const QString& partOfSpeech = QString());
+    int availableQuizQuestionCount(const QString& type, const QString& groupId = QString(), const QString& partOfSpeech = QString());
+    bool canStartQuiz(const QString& type, const QString& groupId = QString(), int questionCount = 10, const QString& partOfSpeech = QString());
+    bool startQuiz(const QString& type, const QString& groupId = QString(), int questionCount = 10, const QString& partOfSpeech = QString());
     void resetQuiz();
 
     bool selectQuizType(const QString& type);
@@ -40,7 +40,7 @@ private:
     QuizType quizTypeFromString(const QString& type) const;
     QString quizTypeToString(QuizType type) const;
     QString quizTypeTitle(QuizType type) const;
-    int availableQuestionCount(QuizType type, int groupId, const QString& partOfSpeech = QString()) const;
+    int availableQuestionCount(QuizType type, const QString& groupId, const QString& partOfSpeech = QString()) const;
     QList<DLQuizQuestion> buildQuestions(QuizType type, const QList<DLWord>& questionWords, const QList<DLWord>& pool, int limit) const;
     DLQuizQuestion buildQuestion(QuizType type, const DLWord& word, const QList<DLWord>& pool) const;
     QStringList answerOptionsForTranslation(const DLWord& word, QList<DLWord> pool) const;

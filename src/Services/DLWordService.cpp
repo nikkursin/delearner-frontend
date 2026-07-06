@@ -10,9 +10,9 @@ DLWordService::DLWordService(DLDatabaseManager& database)
 {
 }
 
-int DLWordService::createWord(const QVariantMap& wordData)
+QString DLWordService::createWord(const QVariantMap& wordData)
 {
-    const int newId = m_database.insertWord(
+    const QString newId = m_database.insertWord(
         trimmedStringValue(wordData, QStringLiteral("german_word")),
         trimmedStringValue(wordData, QStringLiteral("article")),
         trimmedStringValue(wordData, QStringLiteral("part_of_speech")),
@@ -21,6 +21,7 @@ int DLWordService::createWord(const QVariantMap& wordData)
         trimmedStringValue(wordData, QStringLiteral("example_phrase_native")),
         groupIdFromWordData(wordData),
         trimmedStringValue(wordData, QStringLiteral("sync_id")),
+        trimmedStringValue(wordData, QStringLiteral("notes")),
         trimmedStringValue(wordData, QStringLiteral("plural_form")),
         trimmedStringValue(wordData, QStringLiteral("praeteritum_form")),
         trimmedStringValue(wordData, QStringLiteral("partizip_ii_form")),
@@ -28,13 +29,13 @@ int DLWordService::createWord(const QVariantMap& wordData)
         trimmedStringValue(wordData, QStringLiteral("comparative_form")),
         trimmedStringValue(wordData, QStringLiteral("superlative_form")));
 
-    m_lastError = newId < 0 ? m_database.lastError() : QString();
+    m_lastError = newId.isEmpty() ? m_database.lastError() : QString();
     return newId;
 }
 
-bool DLWordService::updateWord(int id, const QVariantMap& wordData)
+bool DLWordService::updateWord(const QString& id, const QVariantMap& wordData)
 {
-    if (id <= 0) {
+    if (id.trimmed().isEmpty()) {
         m_lastError = QStringLiteral("Invalid word id.");
         qCWarning(dlService) << "Rejected word update: invalid id";
         return false;
@@ -50,6 +51,7 @@ bool DLWordService::updateWord(int id, const QVariantMap& wordData)
         trimmedStringValue(wordData, QStringLiteral("example_phrase_native")),
         groupIdFromWordData(wordData),
         trimmedStringValue(wordData, QStringLiteral("sync_id")),
+        trimmedStringValue(wordData, QStringLiteral("notes")),
         trimmedStringValue(wordData, QStringLiteral("plural_form")),
         trimmedStringValue(wordData, QStringLiteral("praeteritum_form")),
         trimmedStringValue(wordData, QStringLiteral("partizip_ii_form")),
@@ -61,9 +63,9 @@ bool DLWordService::updateWord(int id, const QVariantMap& wordData)
     return success;
 }
 
-bool DLWordService::deleteWord(int id)
+bool DLWordService::deleteWord(const QString& id)
 {
-    if (id <= 0) {
+    if (id.trimmed().isEmpty()) {
         m_lastError = QStringLiteral("Invalid word id.");
         qCWarning(dlService) << "Rejected word delete: invalid id";
         return false;
@@ -74,9 +76,9 @@ bool DLWordService::deleteWord(int id)
     return success;
 }
 
-QVariantMap DLWordService::wordById(int id)
+QVariantMap DLWordService::wordById(const QString& id)
 {
-    if (id <= 0) {
+    if (id.trimmed().isEmpty()) {
         m_lastError = QStringLiteral("Invalid word id.");
         qCWarning(dlService) << "Rejected word lookup: invalid id";
         return {};
@@ -87,13 +89,13 @@ QVariantMap DLWordService::wordById(int id)
     return word;
 }
 
-QVariantList DLWordService::loadWords(const QString& sortMode, int groupId)
+QVariantList DLWordService::loadWords(const QString& sortMode, const QString& groupId)
 {
     m_lastError.clear();
     return m_database.fetchAllWords(sortMode, groupId);
 }
 
-QVariantList DLWordService::searchWords(const QString& query, const QString& sortMode, int groupId)
+QVariantList DLWordService::searchWords(const QString& query, const QString& sortMode, const QString& groupId)
 {
     const QString trimmedQuery = query.trimmed();
     if (trimmedQuery.isEmpty()) {
@@ -104,7 +106,7 @@ QVariantList DLWordService::searchWords(const QString& query, const QString& sor
     return sortedWords(m_database.searchWords(trimmedQuery, groupId), sortMode);
 }
 
-int DLWordService::wordCount(int groupId)
+int DLWordService::wordCount(const QString& groupId)
 {
     m_lastError.clear();
     return m_database.getWordCount(groupId);
@@ -134,16 +136,14 @@ QString DLWordService::trimmedStringValue(const QVariantMap& wordData, const QSt
     return wordData.value(key).toString().trimmed();
 }
 
-int DLWordService::groupIdFromWordData(const QVariantMap& wordData) const
+QString DLWordService::groupIdFromWordData(const QVariantMap& wordData) const
 {
     const QVariant value = wordData.value(QStringLiteral("group_id"));
     if (!value.isValid() || value.isNull()) {
-        return -1;
+        return {};
     }
 
-    bool ok = false;
-    const int groupId = value.toInt(&ok);
-    return ok && groupId >= 0 ? groupId : -1;
+    return value.toString().trimmed();
 }
 
 QVariantList DLWordService::sortedWords(const QVariantList& words, const QString& sortMode) const

@@ -302,12 +302,14 @@ void TestDatabaseManager::openDatabaseMigratesLegacySchema()
     QCOMPARE(groups.size(), 1);
     QCOMPARE(groups.first().toMap().value(QStringLiteral("name")).toString(), QStringLiteral("Basics"));
     QCOMPARE(groups.first().toMap().value(QStringLiteral("updated_at")).toLongLong(), 7);
+    const QString groupSyncId = groups.first().toMap().value(QStringLiteral("id")).toString();
+    QVERIFY(!groupSyncId.isEmpty());
 
-    const QVariantList words = DLDatabaseManager::instance().fetchAllWords(QStringLiteral("newest"), -1);
+    const QVariantList words = DLDatabaseManager::instance().fetchAllWords(QStringLiteral("newest"));
     QCOMPARE(words.size(), 1);
     const QVariantMap word = words.first().toMap();
     QCOMPARE(word.value(QStringLiteral("german_word")).toString(), QStringLiteral("gehen"));
-    QCOMPARE(word.value(QStringLiteral("group_id")).toInt(), 1);
+    QCOMPARE(word.value(QStringLiteral("group_id")).toString(), groupSyncId);
     QCOMPARE(word.value(QStringLiteral("updated_at")).toLongLong(), 10);
     QCOMPARE(word.value(QStringLiteral("praeteritum_form")).toString(), QStringLiteral("ging"));
     QCOMPARE(word.value(QStringLiteral("partizip_ii_form")).toString(), QStringLiteral("gegangen"));
@@ -358,10 +360,10 @@ void TestDatabaseManager::openDatabaseMigratesLegacySchema()
 
 void TestDatabaseManager::deleteAllDataRemovesStoredData()
 {
-    const int groupId = DLDatabaseManager::instance().insertGroup(QStringLiteral("Basics"), QStringLiteral("#112233"));
-    QVERIFY(groupId > 0);
+    const QString groupId = DLDatabaseManager::instance().insertGroup(QStringLiteral("Basics"), QStringLiteral("#112233"));
+    QVERIFY(!groupId.isEmpty());
 
-    const int wordId = DLDatabaseManager::instance().insertWord(
+    const QString wordId = DLDatabaseManager::instance().insertWord(
         QStringLiteral("Haus"),
         QStringLiteral("das"),
         QStringLiteral("Nomen"),
@@ -369,7 +371,7 @@ void TestDatabaseManager::deleteAllDataRemovesStoredData()
         QString(),
         QString(),
         groupId);
-    QVERIFY(wordId > 0);
+    QVERIFY(!wordId.isEmpty());
 
     QVERIFY2(DLDatabaseManager::instance().deleteAllData(),
              qPrintable(DLDatabaseManager::instance().lastError()));

@@ -11,13 +11,13 @@ class DLReviewStatsRepository
 public:
     explicit DLReviewStatsRepository(DLDatabaseManager& database);
 
-    bool incrementCorrectAnswer(int wordId);
-    bool incrementWrongAnswer(int wordId);
-    DLWordReviewStats fetchStats(int wordId);
+    bool incrementCorrectAnswer(const QString& wordId);
+    bool incrementWrongAnswer(const QString& wordId);
+    DLWordReviewStats fetchStats(const QString& wordId);
     bool upsertStats(const DLWordReviewStats& stats);
 
 private:
-    bool incrementAnswer(int wordId, const QString& columnName);
+    bool incrementAnswer(const QString& wordId, const QString& columnName);
 
     DLDatabaseManager& m_database;
 };

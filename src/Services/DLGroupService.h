@@ -12,9 +12,9 @@ public:
     explicit DLGroupService(DLDatabaseManager& database);
 
     QVariantList availableGroups();
-    int createGroup(const QString& name, const QString& colorHex = QStringLiteral("#337fe6"));
-    bool updateGroup(int id, const QString& name, const QString& colorHex = QStringLiteral("#337fe6"));
-    bool deleteGroup(int id);
+    QString createGroup(const QString& name, const QString& colorHex = QStringLiteral("#337fe6"));
+    bool updateGroup(const QString& id, const QString& name, const QString& colorHex = QStringLiteral("#337fe6"));
+    bool deleteGroup(const QString& id);
     int groupCount();
     QString lastError() const;
 

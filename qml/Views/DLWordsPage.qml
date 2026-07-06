@@ -13,13 +13,13 @@ DLAppPage {
     activeTab: "words"
 
     property var wordsModel: []
-    property var groupOptions: [{ id: -1, name: "All" }]
-    property int selectedGroupId: -1
+    property var groupOptions: [{ id: "", name: "All" }]
+    property string selectedGroupId: ""
     property string selectedGroupName: "All"
     property string searchQuery: ""
     property string sortMode: "newest"
     property int totalWordCount: 0
-    property int pendingDeleteWordId: -1
+    property string pendingDeleteWordId: ""
     property string pendingDeleteWord: ""
     property string errorMessage: ""
 
@@ -56,7 +56,7 @@ DLAppPage {
 
     function loadGroups() {
         var groups = appStateManager.availableGroups()
-        var options = [{ id: -1, name: "All" }]
+        var options = [{ id: "", name: "All" }]
 
         for (var i = 0; i < groups.length; ++i) {
             options.push({
@@ -68,7 +68,7 @@ DLAppPage {
         groupOptions = options
 
         if (!selectGroupById(selectedGroupId, false)) {
-            selectedGroupId = -1
+            selectedGroupId = ""
             selectedGroupName = "All"
         }
     }
@@ -102,7 +102,7 @@ DLAppPage {
     }
 
     function groupNameFor(groupId) {
-        if (groupId === undefined || groupId === null || groupId < 0) {
+        if (groupId === undefined || groupId === null || groupId === "") {
             return ""
         }
 
@@ -165,7 +165,7 @@ DLAppPage {
 
     function countSubtitle() {
         var noun = totalWordCount === 1 ? "word" : "words"
-        if (selectedGroupId >= 0) {
+        if (selectedGroupId.length > 0) {
             return totalWordCount + " " + noun + " in " + selectedGroupName
         }
 
@@ -459,7 +459,7 @@ DLAppPage {
             } else {
                 searchField.text = ""
                 root.searchQuery = ""
-                root.selectGroupById(-1, false)
+                root.selectGroupById("", false)
                 root.reloadWords()
             }
         }

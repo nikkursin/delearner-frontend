@@ -19,7 +19,7 @@ QVariantList DLQuizService::availableQuizModes()
 {
     QVariantList modes;
 
-    const int translationCount = availableQuestionCount(TranslationQuiz, -1);
+    const int translationCount = availableQuestionCount(TranslationQuiz, QString());
     QVariantMap translationMode;
     translationMode.insert(QStringLiteral("type"), quizTypeToString(TranslationQuiz));
     translationMode.insert(QStringLiteral("title"), quizTypeTitle(TranslationQuiz));
@@ -30,7 +30,7 @@ QVariantList DLQuizService::availableQuizModes()
     translationMode.insert(QStringLiteral("unavailableReason"), translationCount >= 2 ? QString() : QStringLiteral("Add at least 2 words with translations to start."));
     modes.append(translationMode);
 
-    const int articleCount = availableQuestionCount(ArticleQuiz, -1);
+    const int articleCount = availableQuestionCount(ArticleQuiz, QString());
     QVariantMap articleMode;
     articleMode.insert(QStringLiteral("type"), quizTypeToString(ArticleQuiz));
     articleMode.insert(QStringLiteral("title"), quizTypeTitle(ArticleQuiz));
@@ -45,7 +45,7 @@ QVariantList DLQuizService::availableQuizModes()
     return modes;
 }
 
-int DLQuizService::availableQuizQuestionCount(const QString& type, int groupId, const QString& partOfSpeech)
+int DLQuizService::availableQuizQuestionCount(const QString& type, const QString& groupId, const QString& partOfSpeech)
 {
     const QuizType quizType = quizTypeFromString(type);
     const int count = availableQuestionCount(quizType, groupId, partOfSpeech);
@@ -53,7 +53,7 @@ int DLQuizService::availableQuizQuestionCount(const QString& type, int groupId, 
     return count;
 }
 
-bool DLQuizService::canStartQuiz(const QString& type, int groupId, int questionCount, const QString& partOfSpeech)
+bool DLQuizService::canStartQuiz(const QString& type, const QString& groupId, int questionCount, const QString& partOfSpeech)
 {
     const QuizType quizType = quizTypeFromString(type);
     if (quizType == UnknownQuiz) {
@@ -90,7 +90,7 @@ bool DLQuizService::canStartQuiz(const QString& type, int groupId, int questionC
     return true;
 }
 
-bool DLQuizService::startQuiz(const QString& type, int groupId, int questionCount, const QString& partOfSpeech)
+bool DLQuizService::startQuiz(const QString& type, const QString& groupId, int questionCount, const QString& partOfSpeech)
 {
     const QuizType quizType = quizTypeFromString(type);
     if (!canStartQuiz(type, groupId, questionCount, partOfSpeech)) {
@@ -207,7 +207,7 @@ QString DLQuizService::quizTypeTitle(QuizType type) const
     }
 }
 
-int DLQuizService::availableQuestionCount(QuizType type, int groupId, const QString& partOfSpeech) const
+int DLQuizService::availableQuestionCount(QuizType type, const QString& groupId, const QString& partOfSpeech) const
 {
     DLQuizRepository quizRepository(m_database);
     if (type == TranslationQuiz) {
@@ -227,7 +227,7 @@ QList<DLQuizQuestion> DLQuizService::buildQuestions(QuizType type,
     QList<DLQuizQuestion> questions;
     for (int i = 0; i < limit; ++i) {
         const DLQuizQuestion question = buildQuestion(type, questionWords.at(i), pool);
-        if (question.wordId > 0) {
+        if (!question.wordId.isEmpty()) {
             questions.append(question);
         }
     }
@@ -237,7 +237,7 @@ QList<DLQuizQuestion> DLQuizService::buildQuestions(QuizType type,
 DLQuizQuestion DLQuizService::buildQuestion(QuizType type, const DLWord& word, const QList<DLWord>& pool) const
 {
     const QString germanWord = word.germanWord.trimmed();
-    if (word.id <= 0 || germanWord.isEmpty()) {
+    if (word.id.isEmpty() || germanWord.isEmpty()) {
         return {};
     }
 

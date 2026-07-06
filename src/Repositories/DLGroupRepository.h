@@ -12,11 +12,11 @@ class DLGroupRepository
 public:
     explicit DLGroupRepository(DLDatabaseManager& database);
 
-    int insertGroup(const DLWordGroup& group);
+    QString insertGroup(const DLWordGroup& group);
     bool updateGroup(const DLWordGroup& group);
-    bool deleteGroup(int id);
+    bool deleteGroup(const QString& id);
     QList<DLWordGroup> fetchAllGroups();
-    DLWordGroup fetchGroupById(int id);
+    DLWordGroup fetchGroupById(const QString& id);
     int getGroupCount();
 
 private:
