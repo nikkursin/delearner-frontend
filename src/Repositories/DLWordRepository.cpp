@@ -16,11 +16,12 @@ DLWordRepository::DLWordRepository(DLDatabaseManager& database)
 QString DLWordRepository::wordSelectColumns()
 {
     return QStringLiteral(
-        "w.id, NULL AS sync_id, NULL AS syncId, "
+        "w.id, w.sync_id, w.sync_id AS syncId, "
         "w.german_word, w.normalized_german_word, w.article, w.part_of_speech, "
         "w.native_translation, w.normalized_native_translation, "
         "w.example_phrase_de, w.example_phrase_native, w.group_id, w.notes, "
-        "nf.plural_form, nf.plural_form AS pluralForm, "
+        "COALESCE(w.plural_form, nf.plural_form) AS plural_form, "
+        "COALESCE(w.plural_form, nf.plural_form) AS pluralForm, "
         "vf.praeteritum_form, vf.praeteritum_form AS praeteritumForm, "
         "vf.partizip_ii_form, vf.partizip_ii_form AS partizipIIForm, "
         "af.positive_form, af.positive_form AS positiveForm, "
@@ -62,12 +63,12 @@ int DLWordRepository::insertWord(const DLWord& word)
                 (german_word, normalized_german_word, article, part_of_speech,
                  native_translation, normalized_native_translation,
                  example_phrase_de, example_phrase_native, group_id,
-                 notes, created_at, updated_at, deleted_at)
+                 plural_form, notes, created_at, updated_at, deleted_at, dirty)
             VALUES
                 (:german_word, :normalized_german_word, :article, :part_of_speech,
                  :native_translation, :normalized_native_translation,
                  :example_phrase_de, :example_phrase_native, :group_id,
-                 :notes, :created_at, :updated_at, NULL);
+                 :plural_form, :notes, :created_at, :updated_at, NULL, 1);
         )"));
         query.bindValue(QStringLiteral(":german_word"), word.germanWord);
         query.bindValue(QStringLiteral(":normalized_german_word"), DLDatabaseManager::normalizedText(word.germanWord));
@@ -78,6 +79,7 @@ int DLWordRepository::insertWord(const DLWord& word)
         query.bindValue(QStringLiteral(":example_phrase_de"), word.examplePhraseDe.trimmed().isEmpty() ? DLDatabaseManager::nullVariant() : QVariant(word.examplePhraseDe.trimmed()));
         query.bindValue(QStringLiteral(":example_phrase_native"), word.examplePhraseNative.trimmed().isEmpty() ? DLDatabaseManager::nullVariant() : QVariant(word.examplePhraseNative.trimmed()));
         query.bindValue(QStringLiteral(":group_id"), word.groupId >= 0 ? QVariant(word.groupId) : DLDatabaseManager::nullVariant());
+        query.bindValue(QStringLiteral(":plural_form"), word.nounForms.pluralForm.trimmed().isEmpty() ? DLDatabaseManager::nullVariant() : QVariant(word.nounForms.pluralForm.trimmed()));
         query.bindValue(QStringLiteral(":notes"), word.notes.trimmed().isEmpty() ? DLDatabaseManager::nullVariant() : QVariant(word.notes.trimmed()));
         query.bindValue(QStringLiteral(":created_at"), now);
         query.bindValue(QStringLiteral(":updated_at"), now);
@@ -92,8 +94,8 @@ int DLWordRepository::insertWord(const DLWord& word)
         stats.prepare(QStringLiteral(R"(
             INSERT INTO word_review_stats
                 (word_id, correct_answers, wrong_answers, last_reviewed_at,
-                 ease_factor, interval_days, due_at, updated_at)
-            VALUES (:word_id, 0, 0, NULL, 2.5, 0, NULL, :updated_at);
+                 ease_factor, interval_days, due_at, created_at, updated_at, dirty)
+            VALUES (:word_id, 0, 0, NULL, 2.5, 0, NULL, :updated_at, :updated_at, 1);
         )"));
         stats.bindValue(QStringLiteral(":word_id"), newId);
         stats.bindValue(QStringLiteral(":updated_at"), now);
@@ -147,8 +149,10 @@ bool DLWordRepository::updateWord(const DLWord& word)
                 example_phrase_de = :example_phrase_de,
                 example_phrase_native = :example_phrase_native,
                 group_id = :group_id,
+                plural_form = :plural_form,
                 notes = :notes,
-                updated_at = :updated_at
+                updated_at = :updated_at,
+                dirty = 1
             WHERE id = :id;
         )"));
         query.bindValue(QStringLiteral(":id"), word.id);
@@ -161,6 +165,7 @@ bool DLWordRepository::updateWord(const DLWord& word)
         query.bindValue(QStringLiteral(":example_phrase_de"), word.examplePhraseDe.trimmed().isEmpty() ? DLDatabaseManager::nullVariant() : QVariant(word.examplePhraseDe.trimmed()));
         query.bindValue(QStringLiteral(":example_phrase_native"), word.examplePhraseNative.trimmed().isEmpty() ? DLDatabaseManager::nullVariant() : QVariant(word.examplePhraseNative.trimmed()));
         query.bindValue(QStringLiteral(":group_id"), word.groupId >= 0 ? QVariant(word.groupId) : DLDatabaseManager::nullVariant());
+        query.bindValue(QStringLiteral(":plural_form"), word.nounForms.pluralForm.trimmed().isEmpty() ? DLDatabaseManager::nullVariant() : QVariant(word.nounForms.pluralForm.trimmed()));
         query.bindValue(QStringLiteral(":notes"), word.notes.trimmed().isEmpty() ? DLDatabaseManager::nullVariant() : QVariant(word.notes.trimmed()));
         query.bindValue(QStringLiteral(":updated_at"), DLDatabaseManager::currentUnixTime());
 
@@ -180,8 +185,18 @@ bool DLWordRepository::updateWord(const DLWord& word)
 bool DLWordRepository::deleteWord(int id)
 {
     const bool success = m_database.executeSql(
-        QStringLiteral("DELETE FROM words WHERE id = :id;"),
-        {{ QStringLiteral(":id"), id }});
+        QStringLiteral(R"(
+            UPDATE words
+            SET deleted_at = COALESCE(deleted_at, :deleted_at),
+                updated_at = :deleted_at,
+                dirty = 1
+            WHERE id = :id
+              AND deleted_at IS NULL;
+        )"),
+        {
+            { QStringLiteral(":id"), id },
+            { QStringLiteral(":deleted_at"), DLDatabaseManager::currentUnixTime() }
+        });
     if (!success) {
         qCWarning(dlRepo) << "Failed to delete word" << id << ":" << m_database.lastError();
     }
@@ -414,11 +429,11 @@ bool DLWordRepository::createPhraseFromExample(QSqlDatabase& db, QString* error,
             (german_word, normalized_german_word, article, part_of_speech,
              native_translation, normalized_native_translation,
              example_phrase_de, example_phrase_native, group_id,
-             notes, created_at, updated_at, deleted_at)
+             plural_form, notes, created_at, updated_at, deleted_at, dirty)
         VALUES
             (:german_word, :normalized_german_word, NULL, 'Phrase',
              :native_translation, :normalized_native_translation,
-             NULL, NULL, :group_id, NULL, :created_at, :updated_at, NULL);
+             NULL, NULL, :group_id, NULL, NULL, :created_at, :updated_at, NULL, 1);
     )"));
     phrase.bindValue(QStringLiteral(":german_word"), phraseGerman);
     phrase.bindValue(QStringLiteral(":normalized_german_word"), DLDatabaseManager::normalizedText(phraseGerman));
@@ -436,8 +451,8 @@ bool DLWordRepository::createPhraseFromExample(QSqlDatabase& db, QString* error,
     stats.prepare(QStringLiteral(R"(
         INSERT INTO word_review_stats
             (word_id, correct_answers, wrong_answers, last_reviewed_at,
-             ease_factor, interval_days, due_at, updated_at)
-        VALUES (:word_id, 0, 0, NULL, 2.5, 0, NULL, :updated_at);
+             ease_factor, interval_days, due_at, created_at, updated_at, dirty)
+        VALUES (:word_id, 0, 0, NULL, 2.5, 0, NULL, :updated_at, :updated_at, 1);
     )"));
     stats.bindValue(QStringLiteral(":word_id"), phrase.lastInsertId().toInt());
     stats.bindValue(QStringLiteral(":updated_at"), now);

@@ -32,6 +32,7 @@ private:
     QString m_dbPath;
 
     bool tableExists(const QString& tableName);
+    bool columnExists(const QString& tableName, const QString& columnName);
     bool indexExists(const QString& indexName);
 };
 
@@ -58,6 +59,16 @@ bool TestDatabaseManager::tableExists(const QString& tableName)
                {{ QStringLiteral(":name"), tableName }}) == 1;
 }
 
+bool TestDatabaseManager::columnExists(const QString& tableName, const QString& columnName)
+{
+    return DLDatabaseManager::instance().selectInt(
+               QStringLiteral("SELECT COUNT(*) FROM pragma_table_info(:table_name) WHERE name = :column_name;"),
+               {
+                   { QStringLiteral(":table_name"), tableName },
+                   { QStringLiteral(":column_name"), columnName }
+               }) == 1;
+}
+
 bool TestDatabaseManager::indexExists(const QString& indexName)
 {
     return DLDatabaseManager::instance().selectInt(
@@ -82,11 +93,41 @@ void TestDatabaseManager::createTablesIfNeededCreatesRequiredTables()
         QStringLiteral("word_review_stats"),
         QStringLiteral("noun_forms"),
         QStringLiteral("verb_forms"),
-        QStringLiteral("adjective_forms")
+        QStringLiteral("adjective_forms"),
+        QStringLiteral("app_settings"),
+        QStringLiteral("sync_state"),
+        QStringLiteral("device_identity"),
+        QStringLiteral("outbound_sync_queue")
     };
 
     for (const QString& tableName : tables) {
         QVERIFY2(tableExists(tableName), qPrintable(QStringLiteral("Missing table: %1").arg(tableName)));
+    }
+
+    const QStringList syncColumns = {
+        QStringLiteral("sync_id"),
+        QStringLiteral("created_at"),
+        QStringLiteral("updated_at"),
+        QStringLiteral("deleted_at"),
+        QStringLiteral("server_updated_at"),
+        QStringLiteral("server_version"),
+        QStringLiteral("device_id"),
+        QStringLiteral("dirty")
+    };
+
+    for (const QString& columnName : syncColumns) {
+        QVERIFY2(columnExists(QStringLiteral("words"), columnName),
+                 qPrintable(QStringLiteral("Missing words.%1").arg(columnName)));
+        QVERIFY2(columnExists(QStringLiteral("groups"), columnName),
+                 qPrintable(QStringLiteral("Missing groups.%1").arg(columnName)));
+    }
+
+    QVERIFY(columnExists(QStringLiteral("words"), QStringLiteral("plural_form")));
+    QVERIFY(columnExists(QStringLiteral("words"), QStringLiteral("notes")));
+
+    for (const QString& columnName : syncColumns) {
+        QVERIFY2(columnExists(QStringLiteral("word_review_stats"), columnName),
+                 qPrintable(QStringLiteral("Missing word_review_stats.%1").arg(columnName)));
     }
 }
 
@@ -97,10 +138,29 @@ void TestDatabaseManager::createIndexesIfNeededCreatesExpectedIndexes()
 
     const QStringList indexes = {
         QStringLiteral("idx_words_group_id"),
+        QStringLiteral("idx_words_sync_id"),
+        QStringLiteral("idx_words_dirty"),
+        QStringLiteral("idx_words_deleted_at"),
+        QStringLiteral("idx_words_server_updated_at"),
         QStringLiteral("idx_words_normalized_german"),
         QStringLiteral("idx_words_part_of_speech"),
         QStringLiteral("idx_words_unique_active_translation"),
-        QStringLiteral("idx_word_review_stats_due_at")
+        QStringLiteral("idx_groups_sync_id"),
+        QStringLiteral("idx_groups_dirty"),
+        QStringLiteral("idx_groups_deleted_at"),
+        QStringLiteral("idx_groups_server_updated_at"),
+        QStringLiteral("idx_word_review_stats_sync_id"),
+        QStringLiteral("idx_word_review_stats_due_at"),
+        QStringLiteral("idx_word_review_stats_dirty"),
+        QStringLiteral("idx_word_review_stats_deleted_at"),
+        QStringLiteral("idx_word_review_stats_server_updated_at"),
+        QStringLiteral("idx_app_settings_dirty"),
+        QStringLiteral("idx_app_settings_deleted_at"),
+        QStringLiteral("idx_app_settings_server_updated_at"),
+        QStringLiteral("idx_sync_state_scope"),
+        QStringLiteral("idx_device_identity_device_id"),
+        QStringLiteral("idx_outbound_sync_queue_record"),
+        QStringLiteral("idx_outbound_sync_queue_created_at")
     };
 
     for (const QString& indexName : indexes) {

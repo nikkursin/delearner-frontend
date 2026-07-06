@@ -146,6 +146,40 @@ bool execMigrationSql(QSqlDatabase& db, const QString& sql, QString* error, cons
     return true;
 }
 
+QString sqliteUuidExpression()
+{
+    return QStringLiteral(R"(
+        lower(hex(randomblob(4))) || '-' ||
+        lower(hex(randomblob(2))) || '-' ||
+        '4' || substr(lower(hex(randomblob(2))), 2) || '-' ||
+        substr('89ab', abs(random()) % 4 + 1, 1) ||
+        substr(lower(hex(randomblob(2))), 2) || '-' ||
+        lower(hex(randomblob(6)))
+    )");
+}
+
+bool addColumnIfMissing(QSqlDatabase& db,
+                        const QString& tableName,
+                        const QString& columnName,
+                        const QString& definition,
+                        QString* error)
+{
+    const bool hasColumn = tableHasColumn(db, tableName, columnName, error);
+    if (error && !error->isEmpty()) {
+        return false;
+    }
+
+    if (hasColumn) {
+        return true;
+    }
+
+    qCInfo(dlDb) << "Adding missing" << tableName + QStringLiteral(".") + columnName << "column";
+    return execMigrationSql(db,
+                            QStringLiteral("ALTER TABLE %1 ADD COLUMN %2 %3;")
+                                .arg(tableName, columnName, definition),
+                            error);
+}
+
 void logSqlFailure(const char* operation,
                    const QString& sql,
                    const QVariantMap& args,
@@ -240,15 +274,22 @@ bool DLDatabaseManager::createTablesIfNeeded()
         { QStringLiteral(R"(
             CREATE TABLE IF NOT EXISTS groups (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sync_id TEXT,
                 name TEXT NOT NULL,
                 color_hex TEXT DEFAULT '#3366CC',
                 created_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL
+                updated_at INTEGER NOT NULL,
+                deleted_at INTEGER,
+                server_updated_at INTEGER,
+                server_version INTEGER NOT NULL DEFAULT 0,
+                device_id TEXT,
+                dirty INTEGER NOT NULL DEFAULT 1
             );
         )"), {} },
         { QStringLiteral(R"(
             CREATE TABLE IF NOT EXISTS words (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sync_id TEXT,
                 german_word TEXT NOT NULL,
                 normalized_german_word TEXT NOT NULL,
                 article TEXT,
@@ -258,23 +299,35 @@ bool DLDatabaseManager::createTablesIfNeeded()
                 example_phrase_de TEXT,
                 example_phrase_native TEXT,
                 group_id INTEGER,
+                plural_form TEXT,
                 notes TEXT,
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL,
                 deleted_at INTEGER,
+                server_updated_at INTEGER,
+                server_version INTEGER NOT NULL DEFAULT 0,
+                device_id TEXT,
+                dirty INTEGER NOT NULL DEFAULT 1,
                 FOREIGN KEY(group_id) REFERENCES groups(id) ON DELETE SET NULL
             );
         )"), {} },
         { QStringLiteral(R"(
             CREATE TABLE IF NOT EXISTS word_review_stats (
                 word_id INTEGER PRIMARY KEY,
+                sync_id TEXT,
                 correct_answers INTEGER NOT NULL DEFAULT 0,
                 wrong_answers INTEGER NOT NULL DEFAULT 0,
                 last_reviewed_at INTEGER,
                 ease_factor REAL DEFAULT 2.5,
                 interval_days INTEGER DEFAULT 0,
                 due_at INTEGER,
+                created_at INTEGER NOT NULL DEFAULT 0,
                 updated_at INTEGER NOT NULL,
+                deleted_at INTEGER,
+                server_updated_at INTEGER,
+                server_version INTEGER NOT NULL DEFAULT 0,
+                device_id TEXT,
+                dirty INTEGER NOT NULL DEFAULT 1,
                 FOREIGN KEY(word_id) REFERENCES words(id) ON DELETE CASCADE
             );
         )"), {} },
@@ -301,6 +354,69 @@ bool DLDatabaseManager::createTablesIfNeeded()
                 superlative_form TEXT,
                 FOREIGN KEY(word_id) REFERENCES words(id) ON DELETE CASCADE
             );
+        )"), {} },
+        { QStringLiteral(R"(
+            CREATE TABLE IF NOT EXISTS app_settings (
+                id TEXT PRIMARY KEY,
+                setting_key TEXT NOT NULL UNIQUE,
+                setting_value TEXT,
+                value_type TEXT NOT NULL DEFAULT 'string',
+                notes TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                deleted_at INTEGER,
+                server_updated_at INTEGER,
+                server_version INTEGER NOT NULL DEFAULT 0,
+                device_id TEXT,
+                dirty INTEGER NOT NULL DEFAULT 1
+            );
+        )"), {} },
+        { QStringLiteral(R"(
+            CREATE TABLE IF NOT EXISTS sync_state (
+                id TEXT PRIMARY KEY,
+                scope TEXT NOT NULL UNIQUE,
+                last_pull_at INTEGER,
+                last_push_at INTEGER,
+                cursor TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                deleted_at INTEGER,
+                server_updated_at INTEGER,
+                server_version INTEGER NOT NULL DEFAULT 0,
+                device_id TEXT,
+                dirty INTEGER NOT NULL DEFAULT 0
+            );
+        )"), {} },
+        { QStringLiteral(R"(
+            CREATE TABLE IF NOT EXISTS device_identity (
+                id TEXT PRIMARY KEY,
+                device_id TEXT NOT NULL UNIQUE,
+                display_name TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                deleted_at INTEGER,
+                server_updated_at INTEGER,
+                server_version INTEGER NOT NULL DEFAULT 0,
+                dirty INTEGER NOT NULL DEFAULT 0
+            );
+        )"), {} },
+        { QStringLiteral(R"(
+            CREATE TABLE IF NOT EXISTS outbound_sync_queue (
+                id TEXT PRIMARY KEY,
+                table_name TEXT NOT NULL,
+                record_id TEXT NOT NULL,
+                operation TEXT NOT NULL,
+                payload_json TEXT,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                deleted_at INTEGER,
+                server_updated_at INTEGER,
+                server_version INTEGER NOT NULL DEFAULT 0,
+                device_id TEXT,
+                dirty INTEGER NOT NULL DEFAULT 1
+            );
         )"), {} }
     };
 
@@ -312,21 +428,60 @@ bool DLDatabaseManager::migrateSchemaIfNeeded()
     qCDebug(dlDb) << "Migrating database schema if needed";
     return transaction([&](QSqlDatabase& db, QString* error) {
         const qint64 now = DLDatabaseManager::currentUnixTime();
+        const QString uuidExpression = sqliteUuidExpression();
 
-        const bool groupsHasUpdatedAt = tableHasColumn(db, QStringLiteral("groups"), QStringLiteral("updated_at"), error);
-        if (!error->isEmpty()) {
+        if (!addColumnIfMissing(db, QStringLiteral("groups"), QStringLiteral("sync_id"), QStringLiteral("TEXT"), error)
+            || !addColumnIfMissing(db, QStringLiteral("groups"), QStringLiteral("updated_at"), QStringLiteral("INTEGER"), error)
+            || !addColumnIfMissing(db, QStringLiteral("groups"), QStringLiteral("deleted_at"), QStringLiteral("INTEGER"), error)
+            || !addColumnIfMissing(db, QStringLiteral("groups"), QStringLiteral("server_updated_at"), QStringLiteral("INTEGER"), error)
+            || !addColumnIfMissing(db, QStringLiteral("groups"), QStringLiteral("server_version"), QStringLiteral("INTEGER NOT NULL DEFAULT 0"), error)
+            || !addColumnIfMissing(db, QStringLiteral("groups"), QStringLiteral("device_id"), QStringLiteral("TEXT"), error)
+            || !addColumnIfMissing(db, QStringLiteral("groups"), QStringLiteral("dirty"), QStringLiteral("INTEGER NOT NULL DEFAULT 1"), error)
+            || !execMigrationSql(db,
+                                 QStringLiteral("UPDATE groups SET updated_at = COALESCE(updated_at, created_at, :now) WHERE updated_at IS NULL;"),
+                                 error,
+                                 {{ QStringLiteral(":now"), now }})
+            || !execMigrationSql(db,
+                                 QStringLiteral("UPDATE groups SET sync_id = %1 WHERE sync_id IS NULL OR TRIM(sync_id) = '';").arg(uuidExpression),
+                                 error)
+            || !execMigrationSql(db,
+                                 QStringLiteral("UPDATE groups SET server_version = COALESCE(server_version, 0), dirty = COALESCE(dirty, 1);"),
+                                 error)) {
             return false;
         }
 
-        if (!groupsHasUpdatedAt) {
-            qCInfo(dlDb) << "Adding missing groups.updated_at column";
-            if (!execMigrationSql(db, QStringLiteral("ALTER TABLE groups ADD COLUMN updated_at INTEGER;"), error)
-                || !execMigrationSql(db,
-                                     QStringLiteral("UPDATE groups SET updated_at = COALESCE(created_at, :now) WHERE updated_at IS NULL;"),
-                                     error,
-                                     {{ QStringLiteral(":now"), now }})) {
-                return false;
-            }
+        if (!addColumnIfMissing(db, QStringLiteral("words"), QStringLiteral("sync_id"), QStringLiteral("TEXT"), error)
+            || !addColumnIfMissing(db, QStringLiteral("words"), QStringLiteral("plural_form"), QStringLiteral("TEXT"), error)
+            || !addColumnIfMissing(db, QStringLiteral("words"), QStringLiteral("notes"), QStringLiteral("TEXT"), error)
+            || !addColumnIfMissing(db, QStringLiteral("words"), QStringLiteral("deleted_at"), QStringLiteral("INTEGER"), error)
+            || !addColumnIfMissing(db, QStringLiteral("words"), QStringLiteral("server_updated_at"), QStringLiteral("INTEGER"), error)
+            || !addColumnIfMissing(db, QStringLiteral("words"), QStringLiteral("server_version"), QStringLiteral("INTEGER NOT NULL DEFAULT 0"), error)
+            || !addColumnIfMissing(db, QStringLiteral("words"), QStringLiteral("device_id"), QStringLiteral("TEXT"), error)
+            || !addColumnIfMissing(db, QStringLiteral("words"), QStringLiteral("dirty"), QStringLiteral("INTEGER NOT NULL DEFAULT 1"), error)
+            || !execMigrationSql(db,
+                                 QStringLiteral("UPDATE words SET sync_id = %1 WHERE sync_id IS NULL OR TRIM(sync_id) = '';").arg(uuidExpression),
+                                 error)
+            || !execMigrationSql(db,
+                                 QStringLiteral(R"(
+                                     UPDATE words
+                                     SET plural_form = (
+                                         SELECT nf.plural_form
+                                         FROM noun_forms nf
+                                         WHERE nf.word_id = words.id
+                                     )
+                                     WHERE (plural_form IS NULL OR TRIM(plural_form) = '')
+                                       AND EXISTS (
+                                           SELECT 1
+                                           FROM noun_forms nf
+                                           WHERE nf.word_id = words.id
+                                             AND TRIM(COALESCE(nf.plural_form, '')) != ''
+                                       );
+                                 )"),
+                                 error)
+            || !execMigrationSql(db,
+                                 QStringLiteral("UPDATE words SET server_version = COALESCE(server_version, 0), dirty = COALESCE(dirty, 1);"),
+                                 error)) {
+            return false;
         }
 
         const bool hasPraeteritum = tableHasColumn(db, QStringLiteral("verb_forms"), QStringLiteral("praeteritum_form"), error);
@@ -386,6 +541,26 @@ bool DLDatabaseManager::migrateSchemaIfNeeded()
             }
         }
 
+        if (!addColumnIfMissing(db, QStringLiteral("word_review_stats"), QStringLiteral("sync_id"), QStringLiteral("TEXT"), error)
+            || !addColumnIfMissing(db, QStringLiteral("word_review_stats"), QStringLiteral("created_at"), QStringLiteral("INTEGER NOT NULL DEFAULT 0"), error)
+            || !addColumnIfMissing(db, QStringLiteral("word_review_stats"), QStringLiteral("deleted_at"), QStringLiteral("INTEGER"), error)
+            || !addColumnIfMissing(db, QStringLiteral("word_review_stats"), QStringLiteral("server_updated_at"), QStringLiteral("INTEGER"), error)
+            || !addColumnIfMissing(db, QStringLiteral("word_review_stats"), QStringLiteral("server_version"), QStringLiteral("INTEGER NOT NULL DEFAULT 0"), error)
+            || !addColumnIfMissing(db, QStringLiteral("word_review_stats"), QStringLiteral("device_id"), QStringLiteral("TEXT"), error)
+            || !addColumnIfMissing(db, QStringLiteral("word_review_stats"), QStringLiteral("dirty"), QStringLiteral("INTEGER NOT NULL DEFAULT 1"), error)
+            || !execMigrationSql(db,
+                                 QStringLiteral("UPDATE word_review_stats SET sync_id = %1 WHERE sync_id IS NULL OR TRIM(sync_id) = '';").arg(uuidExpression),
+                                 error)
+            || !execMigrationSql(db,
+                                 QStringLiteral("UPDATE word_review_stats SET created_at = COALESCE(NULLIF(created_at, 0), updated_at, :now) WHERE created_at IS NULL OR created_at = 0;"),
+                                 error,
+                                 {{ QStringLiteral(":now"), now }})
+            || !execMigrationSql(db,
+                                 QStringLiteral("UPDATE word_review_stats SET server_version = COALESCE(server_version, 0), dirty = COALESCE(dirty, 1);"),
+                                 error)) {
+            return false;
+        }
+
         return true;
     });
 }
@@ -395,6 +570,10 @@ bool DLDatabaseManager::createIndexesIfNeeded()
     qCDebug(dlDb) << "Creating database indexes if needed";
     const QList<DLSqlCommand> commands = {
         { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_words_group_id ON words(group_id);"), {} },
+        { QStringLiteral("CREATE UNIQUE INDEX IF NOT EXISTS idx_words_sync_id ON words(sync_id) WHERE sync_id IS NOT NULL;"), {} },
+        { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_words_dirty ON words(dirty) WHERE dirty = 1;"), {} },
+        { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_words_deleted_at ON words(deleted_at);"), {} },
+        { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_words_server_updated_at ON words(server_updated_at);"), {} },
         { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_words_normalized_german ON words(normalized_german_word);"), {} },
         { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_words_part_of_speech ON words(part_of_speech);"), {} },
         { QStringLiteral(R"(
@@ -402,7 +581,100 @@ bool DLDatabaseManager::createIndexesIfNeeded()
             ON words(normalized_german_word, normalized_native_translation)
             WHERE deleted_at IS NULL;
         )"), {} },
-        { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_word_review_stats_due_at ON word_review_stats(due_at);"), {} }
+        { QStringLiteral("CREATE UNIQUE INDEX IF NOT EXISTS idx_groups_sync_id ON groups(sync_id) WHERE sync_id IS NOT NULL;"), {} },
+        { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_groups_dirty ON groups(dirty) WHERE dirty = 1;"), {} },
+        { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_groups_deleted_at ON groups(deleted_at);"), {} },
+        { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_groups_server_updated_at ON groups(server_updated_at);"), {} },
+        { QStringLiteral("CREATE UNIQUE INDEX IF NOT EXISTS idx_word_review_stats_sync_id ON word_review_stats(sync_id) WHERE sync_id IS NOT NULL;"), {} },
+        { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_word_review_stats_due_at ON word_review_stats(due_at);"), {} },
+        { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_word_review_stats_dirty ON word_review_stats(dirty) WHERE dirty = 1;"), {} },
+        { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_word_review_stats_deleted_at ON word_review_stats(deleted_at);"), {} },
+        { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_word_review_stats_server_updated_at ON word_review_stats(server_updated_at);"), {} },
+        { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_app_settings_dirty ON app_settings(dirty) WHERE dirty = 1;"), {} },
+        { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_app_settings_deleted_at ON app_settings(deleted_at);"), {} },
+        { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_app_settings_server_updated_at ON app_settings(server_updated_at);"), {} },
+        { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_sync_state_scope ON sync_state(scope);"), {} },
+        { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_device_identity_device_id ON device_identity(device_id);"), {} },
+        { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_outbound_sync_queue_record ON outbound_sync_queue(table_name, record_id);"), {} },
+        { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_outbound_sync_queue_created_at ON outbound_sync_queue(created_at);"), {} },
+        { QString(R"SQL(
+            CREATE TRIGGER IF NOT EXISTS trg_groups_sync_id_after_insert
+            AFTER INSERT ON groups
+            FOR EACH ROW
+            WHEN NEW.sync_id IS NULL OR TRIM(NEW.sync_id) = ''
+            BEGIN
+                UPDATE groups SET sync_id = )SQL") + sqliteUuidExpression() + QString(R"SQL(
+                WHERE id = NEW.id;
+            END;
+        )SQL"), {} },
+        { QString(R"SQL(
+            CREATE TRIGGER IF NOT EXISTS trg_words_sync_id_after_insert
+            AFTER INSERT ON words
+            FOR EACH ROW
+            WHEN NEW.sync_id IS NULL OR TRIM(NEW.sync_id) = ''
+            BEGIN
+                UPDATE words SET sync_id = )SQL") + sqliteUuidExpression() + QString(R"SQL(
+                WHERE id = NEW.id;
+            END;
+        )SQL"), {} },
+        { QString(R"SQL(
+            CREATE TRIGGER IF NOT EXISTS trg_word_review_stats_sync_after_insert
+            AFTER INSERT ON word_review_stats
+            FOR EACH ROW
+            WHEN NEW.sync_id IS NULL OR TRIM(NEW.sync_id) = '' OR NEW.created_at = 0
+            BEGIN
+                UPDATE word_review_stats
+                SET sync_id = CASE
+                        WHEN NEW.sync_id IS NULL OR TRIM(NEW.sync_id) = '' THEN )SQL") + sqliteUuidExpression() + QString(R"SQL(
+                        ELSE NEW.sync_id
+                    END,
+                    created_at = CASE
+                        WHEN NEW.created_at = 0 THEN COALESCE(NEW.updated_at, CAST(strftime('%s', 'now') AS INTEGER))
+                        ELSE NEW.created_at
+                    END
+                WHERE word_id = NEW.word_id;
+            END;
+        )SQL"), {} },
+        { QString(R"SQL(
+            CREATE TRIGGER IF NOT EXISTS trg_app_settings_id_after_insert
+            AFTER INSERT ON app_settings
+            FOR EACH ROW
+            WHEN NEW.id IS NULL OR TRIM(NEW.id) = ''
+            BEGIN
+                UPDATE app_settings SET id = )SQL") + sqliteUuidExpression() + QString(R"SQL(
+                WHERE rowid = NEW.rowid;
+            END;
+        )SQL"), {} },
+        { QString(R"SQL(
+            CREATE TRIGGER IF NOT EXISTS trg_sync_state_id_after_insert
+            AFTER INSERT ON sync_state
+            FOR EACH ROW
+            WHEN NEW.id IS NULL OR TRIM(NEW.id) = ''
+            BEGIN
+                UPDATE sync_state SET id = )SQL") + sqliteUuidExpression() + QString(R"SQL(
+                WHERE rowid = NEW.rowid;
+            END;
+        )SQL"), {} },
+        { QString(R"SQL(
+            CREATE TRIGGER IF NOT EXISTS trg_device_identity_id_after_insert
+            AFTER INSERT ON device_identity
+            FOR EACH ROW
+            WHEN NEW.id IS NULL OR TRIM(NEW.id) = ''
+            BEGIN
+                UPDATE device_identity SET id = )SQL") + sqliteUuidExpression() + QString(R"SQL(
+                WHERE rowid = NEW.rowid;
+            END;
+        )SQL"), {} },
+        { QString(R"SQL(
+            CREATE TRIGGER IF NOT EXISTS trg_outbound_sync_queue_id_after_insert
+            AFTER INSERT ON outbound_sync_queue
+            FOR EACH ROW
+            WHEN NEW.id IS NULL OR TRIM(NEW.id) = ''
+            BEGIN
+                UPDATE outbound_sync_queue SET id = )SQL") + sqliteUuidExpression() + QString(R"SQL(
+                WHERE rowid = NEW.rowid;
+            END;
+        )SQL"), {} }
     };
 
     return executeSqlBatch(commands);

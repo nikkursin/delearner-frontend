@@ -38,7 +38,8 @@ bool DLGroupRepository::updateGroup(const DLWordGroup& group)
             UPDATE groups
             SET name = :name,
                 color_hex = :color_hex,
-                updated_at = :updated_at
+                updated_at = :updated_at,
+                dirty = 1
             WHERE id = :id;
         )"),
         {
@@ -55,9 +56,37 @@ bool DLGroupRepository::updateGroup(const DLWordGroup& group)
 
 bool DLGroupRepository::deleteGroup(int id)
 {
-    const bool success = m_database.executeSql(
-        QStringLiteral("DELETE FROM groups WHERE id = :id;"),
-        {{ QStringLiteral(":id"), id }});
+    const qint64 now = DLDatabaseManager::currentUnixTime();
+    const bool success = m_database.executeSqlBatch({
+        {
+            QStringLiteral(R"(
+                UPDATE groups
+                SET deleted_at = COALESCE(deleted_at, :deleted_at),
+                    updated_at = :deleted_at,
+                    dirty = 1
+                WHERE id = :id
+                  AND deleted_at IS NULL;
+            )"),
+            {
+                { QStringLiteral(":id"), id },
+                { QStringLiteral(":deleted_at"), now }
+            }
+        },
+        {
+            QStringLiteral(R"(
+                UPDATE words
+                SET group_id = NULL,
+                    updated_at = :updated_at,
+                    dirty = 1
+                WHERE group_id = :id
+                  AND deleted_at IS NULL;
+            )"),
+            {
+                { QStringLiteral(":id"), id },
+                { QStringLiteral(":updated_at"), now }
+            }
+        }
+    });
     if (!success) {
         qCWarning(dlRepo) << "Failed to delete group" << id << ":" << m_database.lastError();
     }
@@ -70,6 +99,7 @@ QList<DLWordGroup> DLGroupRepository::fetchAllGroups()
         SELECT g.id, g.name, g.color_hex, g.created_at, g.updated_at,
                (SELECT COUNT(*) FROM words WHERE group_id = g.id AND deleted_at IS NULL) AS word_count
         FROM groups g
+        WHERE g.deleted_at IS NULL
         ORDER BY g.name;
     )"));
 
@@ -87,7 +117,8 @@ DLWordGroup DLGroupRepository::fetchGroupById(int id)
             SELECT g.id, g.name, g.color_hex, g.created_at, g.updated_at,
                    (SELECT COUNT(*) FROM words WHERE group_id = g.id AND deleted_at IS NULL) AS word_count
             FROM groups g
-            WHERE g.id = :id;
+            WHERE g.id = :id
+              AND g.deleted_at IS NULL;
         )"),
         {{ QStringLiteral(":id"), id }});
 
@@ -96,5 +127,5 @@ DLWordGroup DLGroupRepository::fetchGroupById(int id)
 
 int DLGroupRepository::getGroupCount()
 {
-    return m_database.selectInt(QStringLiteral("SELECT COUNT(*) FROM groups;"));
+    return m_database.selectInt(QStringLiteral("SELECT COUNT(*) FROM groups WHERE deleted_at IS NULL;"));
 }

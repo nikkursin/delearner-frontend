@@ -25,7 +25,8 @@ DLWordReviewStats DLReviewStatsRepository::fetchStats(int wordId)
             SELECT word_id, correct_answers, wrong_answers, last_reviewed_at,
                    ease_factor, interval_days, due_at, updated_at
             FROM word_review_stats
-            WHERE word_id = :word_id;
+            WHERE word_id = :word_id
+              AND deleted_at IS NULL;
         )"),
         {{ QStringLiteral(":word_id"), wordId }});
 
@@ -48,10 +49,10 @@ bool DLReviewStatsRepository::upsertStats(const DLWordReviewStats& stats)
         QStringLiteral(R"(
             INSERT INTO word_review_stats
                 (word_id, correct_answers, wrong_answers, last_reviewed_at,
-                 ease_factor, interval_days, due_at, updated_at)
+                 ease_factor, interval_days, due_at, created_at, updated_at, dirty)
             VALUES
                 (:word_id, :correct_answers, :wrong_answers, :last_reviewed_at,
-                 :ease_factor, :interval_days, :due_at, :updated_at)
+                 :ease_factor, :interval_days, :due_at, :created_at, :updated_at, 1)
             ON CONFLICT(word_id) DO UPDATE SET
                 correct_answers = excluded.correct_answers,
                 wrong_answers = excluded.wrong_answers,
@@ -59,7 +60,9 @@ bool DLReviewStatsRepository::upsertStats(const DLWordReviewStats& stats)
                 ease_factor = excluded.ease_factor,
                 interval_days = excluded.interval_days,
                 due_at = excluded.due_at,
-                updated_at = excluded.updated_at;
+                updated_at = excluded.updated_at,
+                deleted_at = NULL,
+                dirty = 1;
         )"),
         {
             { QStringLiteral(":word_id"), stats.wordId },
@@ -69,6 +72,7 @@ bool DLReviewStatsRepository::upsertStats(const DLWordReviewStats& stats)
             { QStringLiteral(":ease_factor"), stats.easeFactor },
             { QStringLiteral(":interval_days"), stats.intervalDays },
             { QStringLiteral(":due_at"), stats.dueAt },
+            { QStringLiteral(":created_at"), stats.updatedAt > 0 ? stats.updatedAt : now },
             { QStringLiteral(":updated_at"), stats.updatedAt > 0 ? stats.updatedAt : now }
         });
     if (!success) {
@@ -84,13 +88,15 @@ bool DLReviewStatsRepository::incrementAnswer(int wordId, const QString& columnN
         QStringLiteral(R"(
             INSERT INTO word_review_stats
                 (word_id, correct_answers, wrong_answers, last_reviewed_at,
-                 ease_factor, interval_days, due_at, updated_at)
+                 ease_factor, interval_days, due_at, created_at, updated_at, dirty)
             VALUES
-                (:word_id, %1, %2, :reviewed_at, 2.5, 0, NULL, :reviewed_at)
+                (:word_id, %1, %2, :reviewed_at, 2.5, 0, NULL, :reviewed_at, :reviewed_at, 1)
             ON CONFLICT(word_id) DO UPDATE SET
                 %3 = word_review_stats.%3 + 1,
                 last_reviewed_at = excluded.last_reviewed_at,
-                updated_at = excluded.updated_at;
+                updated_at = excluded.updated_at,
+                deleted_at = NULL,
+                dirty = 1;
         )").arg(columnName == QStringLiteral("correct_answers") ? QStringLiteral("1") : QStringLiteral("0"),
                columnName == QStringLiteral("wrong_answers") ? QStringLiteral("1") : QStringLiteral("0"),
                columnName),
