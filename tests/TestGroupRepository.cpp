@@ -7,6 +7,7 @@
 #include "Managers/DLDatabaseManager.h"
 #include "Models/DLWordGroup.h"
 #include "Repositories/DLGroupRepository.h"
+#include "Repositories/DLOutboundSyncQueueRepository.h"
 
 class TestGroupRepository : public QObject
 {
@@ -21,6 +22,8 @@ private slots:
     void fetchGroupByIdReturnsCorrectGroup();
     void updateGroupChangesNameAndColor();
     void deleteGroupRemovesGroup();
+    void outboundQueueTracksGroupCrud();
+    void outboundQueueCanBeSuppressed();
     void wordCountPerGroupWorks();
 
 private:
@@ -115,6 +118,65 @@ void TestGroupRepository::deleteGroupRemovesGroup()
     QVERIFY2(repository.deleteGroup(groupId), qPrintable(DLDatabaseManager::instance().lastError()));
     QVERIFY(repository.fetchGroupById(groupId).id.isEmpty());
     QCOMPARE(repository.getGroupCount(), 0);
+}
+
+void TestGroupRepository::outboundQueueTracksGroupCrud()
+{
+    DLGroupRepository repository(DLDatabaseManager::instance());
+    DLWordGroup group;
+    group.name = QStringLiteral("Basics");
+    group.colorHex = QStringLiteral("#112233");
+
+    const QString groupId = repository.insertGroup(group);
+    QVERIFY2(!groupId.isEmpty(), qPrintable(DLDatabaseManager::instance().lastError()));
+
+    DLWordGroup update;
+    update.id = groupId;
+    update.name = QStringLiteral("Grammar");
+    update.colorHex = QStringLiteral("#445566");
+    QVERIFY2(repository.updateGroup(update), qPrintable(DLDatabaseManager::instance().lastError()));
+    QVERIFY2(repository.deleteGroup(groupId), qPrintable(DLDatabaseManager::instance().lastError()));
+
+    const QVariantList rows = DLDatabaseManager::instance().selectRows(QStringLiteral(R"(
+        SELECT entity_type, entity_id, operation, payload_json, retry_count, last_error, pushed_at
+        FROM outbound_sync_queue
+        ORDER BY rowid;
+    )"));
+    QCOMPARE(rows.size(), 3);
+
+    const QStringList operations = {
+        QStringLiteral("create"),
+        QStringLiteral("update"),
+        QStringLiteral("delete")
+    };
+    for (int i = 0; i < rows.size(); ++i) {
+        const QVariantMap row = rows.at(i).toMap();
+        QCOMPARE(row.value(QStringLiteral("entity_type")).toString(), QStringLiteral("groups"));
+        QCOMPARE(row.value(QStringLiteral("entity_id")).toString(), groupId);
+        QCOMPARE(row.value(QStringLiteral("operation")).toString(), operations.at(i));
+        QCOMPARE(row.value(QStringLiteral("retry_count")).toInt(), 0);
+        QVERIFY(row.value(QStringLiteral("last_error")).isNull());
+        QVERIFY(row.value(QStringLiteral("pushed_at")).isNull());
+    }
+    QVERIFY(rows.at(0).toMap().value(QStringLiteral("payload_json")).toString().contains(QStringLiteral("Basics")));
+    QVERIFY(rows.at(1).toMap().value(QStringLiteral("payload_json")).toString().contains(QStringLiteral("Grammar")));
+    QVERIFY(rows.at(2).toMap().value(QStringLiteral("payload_json")).isNull());
+}
+
+void TestGroupRepository::outboundQueueCanBeSuppressed()
+{
+    DLGroupRepository repository(DLDatabaseManager::instance());
+    DLWordGroup group;
+    group.name = QStringLiteral("Server Group");
+
+    {
+        DLOutboundSyncQueueScope suppressQueue(false);
+        const QString groupId = repository.insertGroup(group);
+        QVERIFY2(!groupId.isEmpty(), qPrintable(DLDatabaseManager::instance().lastError()));
+    }
+
+    QCOMPARE(DLDatabaseManager::instance().selectInt(QStringLiteral("SELECT COUNT(*) FROM groups WHERE deleted_at IS NULL;")), 1);
+    QCOMPARE(DLDatabaseManager::instance().selectInt(QStringLiteral("SELECT COUNT(*) FROM outbound_sync_queue;")), 0);
 }
 
 void TestGroupRepository::wordCountPerGroupWorks()

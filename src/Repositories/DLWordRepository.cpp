@@ -1,11 +1,14 @@
 #include "DLWordRepository.h"
 
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QSqlDatabase>
 #include <QSqlError>
 #include <QSqlQuery>
 
 #include "DLDatabaseManager.h"
 #include "DLLogging.h"
+#include "DLOutboundSyncQueueRepository.h"
 #include "../Models/DLModelMappers.h"
 
 namespace {
@@ -39,6 +42,27 @@ QVariant localGroupId(QSqlDatabase& db, const QString& groupSyncId, QString* err
         return DLDatabaseManager::nullVariant();
     }
     return query.next() ? QVariant(query.value(0).toInt()) : DLDatabaseManager::nullVariant();
+}
+
+QString wordPayloadJson(const DLWord& word, const QString& id)
+{
+    QJsonObject payload;
+    payload.insert(QStringLiteral("id"), id);
+    payload.insert(QStringLiteral("germanWord"), word.germanWord);
+    payload.insert(QStringLiteral("article"), word.article);
+    payload.insert(QStringLiteral("partOfSpeech"), word.partOfSpeech);
+    payload.insert(QStringLiteral("nativeTranslation"), word.nativeTranslation);
+    payload.insert(QStringLiteral("examplePhraseDe"), word.examplePhraseDe);
+    payload.insert(QStringLiteral("examplePhraseNative"), word.examplePhraseNative);
+    payload.insert(QStringLiteral("groupId"), word.groupId);
+    payload.insert(QStringLiteral("notes"), word.notes);
+    payload.insert(QStringLiteral("pluralForm"), word.pluralForm.isEmpty() ? word.nounForms.pluralForm : word.pluralForm);
+    payload.insert(QStringLiteral("praeteritumForm"), word.verbForms.praeteritumForm);
+    payload.insert(QStringLiteral("partizipIIForm"), word.verbForms.partizipIIForm);
+    payload.insert(QStringLiteral("positiveForm"), word.adjectiveForms.positiveForm);
+    payload.insert(QStringLiteral("comparativeForm"), word.adjectiveForms.comparativeForm);
+    payload.insert(QStringLiteral("superlativeForm"), word.adjectiveForms.superlativeForm);
+    return QString::fromUtf8(QJsonDocument(payload).toJson(QJsonDocument::Compact));
 }
 }
 
@@ -164,6 +188,17 @@ QString DLWordRepository::insertWord(const DLWord& word)
             return false;
         }
 
+        DLWord queueWord = word;
+        queueWord.id = newSyncId;
+        if (!DLOutboundSyncQueueRepository::enqueue(db,
+                                                    error,
+                                                    QStringLiteral("words"),
+                                                    newSyncId,
+                                                    QStringLiteral("create"),
+                                                    wordPayloadJson(queueWord, newSyncId))) {
+            return false;
+        }
+
         DLWord phraseCandidate = word;
         phraseCandidate.id = newSyncId;
         return createPhraseFromExample(db, error, phraseCandidate, newId, deviceId);
@@ -247,6 +282,15 @@ bool DLWordRepository::updateWord(const DLWord& word)
             return false;
         }
 
+        if (!DLOutboundSyncQueueRepository::enqueue(db,
+                                                    error,
+                                                    QStringLiteral("words"),
+                                                    word.id,
+                                                    QStringLiteral("update"),
+                                                    wordPayloadJson(word, word.id))) {
+            return false;
+        }
+
         const bool wasPhrase = current.partOfSpeech.compare(QStringLiteral("Phrase"), Qt::CaseInsensitive) == 0;
         return wasPhrase ? true : createPhraseFromExample(db, error, word, localId, deviceId);
     });
@@ -258,8 +302,11 @@ bool DLWordRepository::updateWord(const DLWord& word)
 
 bool DLWordRepository::deleteWord(const QString& id)
 {
-    const bool success = m_database.executeSql(
-        QStringLiteral(R"(
+    const qint64 now = DLDatabaseManager::currentUnixTimeMs();
+    const QString deviceId = DLDatabaseManager::currentDeviceId();
+    const bool success = m_database.transaction([&](QSqlDatabase& db, QString* error) {
+        QSqlQuery query(db);
+        query.prepare(QStringLiteral(R"(
             UPDATE words
             SET deleted_at = COALESCE(deleted_at, :deleted_at),
                 updated_at = :deleted_at,
@@ -267,12 +314,24 @@ bool DLWordRepository::deleteWord(const QString& id)
                 dirty = 1
             WHERE sync_id = :id
               AND deleted_at IS NULL;
-        )"),
-        {
-            { QStringLiteral(":id"), id },
-            { QStringLiteral(":deleted_at"), DLDatabaseManager::currentUnixTimeMs() },
-            { QStringLiteral(":device_id"), DLDatabaseManager::currentDeviceId() }
-        });
+        )"));
+        query.bindValue(QStringLiteral(":id"), id);
+        query.bindValue(QStringLiteral(":deleted_at"), now);
+        query.bindValue(QStringLiteral(":device_id"), deviceId);
+
+        if (!bindAndExec(query, error)) {
+            return false;
+        }
+        if (query.numRowsAffected() <= 0) {
+            return true;
+        }
+
+        return DLOutboundSyncQueueRepository::enqueue(db,
+                                                      error,
+                                                      QStringLiteral("words"),
+                                                      id,
+                                                      QStringLiteral("delete"));
+    });
     if (!success) {
         qCWarning(dlRepo) << "Failed to delete word" << id << ":" << m_database.lastError();
     }
@@ -554,7 +613,22 @@ bool DLWordRepository::createPhraseFromExample(QSqlDatabase& db, QString* error,
     stats.bindValue(QStringLiteral(":sync_id"), DLDatabaseManager::generateUuid());
     stats.bindValue(QStringLiteral(":updated_at"), now);
     stats.bindValue(QStringLiteral(":device_id"), deviceId);
-    return bindAndExec(stats, error);
+    if (!bindAndExec(stats, error)) {
+        return false;
+    }
+
+    DLWord phraseWord;
+    phraseWord.id = phraseId;
+    phraseWord.germanWord = phraseGerman;
+    phraseWord.nativeTranslation = phraseNative;
+    phraseWord.partOfSpeech = QStringLiteral("Phrase");
+    phraseWord.groupId = word.groupId;
+    return DLOutboundSyncQueueRepository::enqueue(db,
+                                                  error,
+                                                  QStringLiteral("words"),
+                                                  phraseId,
+                                                  QStringLiteral("create"),
+                                                  wordPayloadJson(phraseWord, phraseId));
 }
 
 bool DLWordRepository::bindAndExec(QSqlQuery& query, QString* error)

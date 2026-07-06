@@ -270,6 +270,25 @@ bool createDeviceIdentityTable(QSqlDatabase& db, QString* error)
                             error);
 }
 
+bool createOutboundSyncQueueTable(QSqlDatabase& db, QString* error)
+{
+    return execMigrationSql(db,
+                            QStringLiteral(R"(
+                                CREATE TABLE IF NOT EXISTS outbound_sync_queue (
+                                    id TEXT PRIMARY KEY,
+                                    entity_type TEXT NOT NULL,
+                                    entity_id TEXT NOT NULL,
+                                    operation TEXT NOT NULL,
+                                    payload_json TEXT,
+                                    created_at INTEGER NOT NULL,
+                                    retry_count INTEGER NOT NULL DEFAULT 0,
+                                    last_error TEXT,
+                                    pushed_at INTEGER
+                                );
+                            )"),
+                            error);
+}
+
 bool migrateLocalIdentityAndSyncStateTables(QSqlDatabase& db, qint64 now, QString* error)
 {
     QString migrationError;
@@ -403,6 +422,117 @@ bool migrateLocalIdentityAndSyncStateTables(QSqlDatabase& db, qint64 now, QStrin
     }
 
     return recordMigration(db, 2, QStringLiteral("local_device_identity_and_sync_state"), now, error);
+}
+
+bool migrateOutboundSyncQueueTable(QSqlDatabase& db, qint64 now, QString* error)
+{
+    QString migrationError;
+    const bool alreadyApplied = migrationAlreadyApplied(db, 3, &migrationError);
+    if (!migrationError.isEmpty()) {
+        if (error) {
+            *error = migrationError;
+        }
+        return false;
+    }
+    if (alreadyApplied) {
+        return true;
+    }
+
+    const bool queueExists = tableExists(db, QStringLiteral("outbound_sync_queue"), error);
+    if (error && !error->isEmpty()) {
+        return false;
+    }
+    if (queueExists) {
+        const bool hasEntityType = tableHasColumn(db, QStringLiteral("outbound_sync_queue"), QStringLiteral("entity_type"), error);
+        if (error && !error->isEmpty()) {
+            return false;
+        }
+        const bool hasEntityId = tableHasColumn(db, QStringLiteral("outbound_sync_queue"), QStringLiteral("entity_id"), error);
+        if (error && !error->isEmpty()) {
+            return false;
+        }
+        const bool hasRetryCount = tableHasColumn(db, QStringLiteral("outbound_sync_queue"), QStringLiteral("retry_count"), error);
+        if (error && !error->isEmpty()) {
+            return false;
+        }
+        const bool hasPushedAt = tableHasColumn(db, QStringLiteral("outbound_sync_queue"), QStringLiteral("pushed_at"), error);
+        if (error && !error->isEmpty()) {
+            return false;
+        }
+        const bool hasTableName = tableHasColumn(db, QStringLiteral("outbound_sync_queue"), QStringLiteral("table_name"), error);
+        if (error && !error->isEmpty()) {
+            return false;
+        }
+        const bool hasRecordId = tableHasColumn(db, QStringLiteral("outbound_sync_queue"), QStringLiteral("record_id"), error);
+        if (error && !error->isEmpty()) {
+            return false;
+        }
+        const bool hasAttempts = tableHasColumn(db, QStringLiteral("outbound_sync_queue"), QStringLiteral("attempts"), error);
+        if (error && !error->isEmpty()) {
+            return false;
+        }
+
+        if (!hasEntityType || !hasEntityId || !hasRetryCount || !hasPushedAt || hasTableName || hasRecordId || hasAttempts) {
+            const QString legacyTable = QStringLiteral("outbound_sync_queue_legacy_%1").arg(now);
+            if (!execMigrationSql(db, QStringLiteral("DROP TRIGGER IF EXISTS trg_outbound_sync_queue_id_after_insert;"), error)
+                || !execMigrationSql(db, QStringLiteral("ALTER TABLE outbound_sync_queue RENAME TO %1;").arg(legacyTable), error)
+                || !createOutboundSyncQueueTable(db, error)) {
+                return false;
+            }
+
+            if ((hasTableName || hasEntityType) && (hasRecordId || hasEntityId)) {
+                const QString entityTypeExpression = hasEntityType
+                    ? QStringLiteral("entity_type")
+                    : QStringLiteral("table_name");
+                const QString entityIdExpression = hasEntityId
+                    ? QStringLiteral("entity_id")
+                    : QStringLiteral("record_id");
+                const QString retryCountExpression = hasRetryCount
+                    ? QStringLiteral("retry_count")
+                    : (hasAttempts ? QStringLiteral("attempts") : QStringLiteral("0"));
+                const QString pushedAtExpression = hasPushedAt
+                    ? QStringLiteral("pushed_at")
+                    : QStringLiteral("NULL");
+
+                if (!execMigrationSql(db,
+                                      QStringLiteral(R"(
+                                          INSERT OR IGNORE INTO outbound_sync_queue
+                                              (id, entity_type, entity_id, operation, payload_json,
+                                               created_at, retry_count, last_error, pushed_at)
+                                          SELECT COALESCE(NULLIF(TRIM(id), ''), %6),
+                                                 %2,
+                                                 %3,
+                                                 operation,
+                                                 payload_json,
+                                                 COALESCE(created_at, :now),
+                                                 COALESCE(%4, 0),
+                                                 last_error,
+                                                 %5
+                                          FROM %1
+                                          WHERE TRIM(COALESCE(%2, '')) != ''
+                                            AND TRIM(COALESCE(%3, '')) != ''
+                                            AND TRIM(COALESCE(operation, '')) != '';
+                                      )").arg(legacyTable,
+                                             entityTypeExpression,
+                                             entityIdExpression,
+                                             retryCountExpression,
+                                             pushedAtExpression,
+                                             sqliteUuidExpression()),
+                                      error,
+                                      {{ QStringLiteral(":now"), now }})) {
+                    return false;
+                }
+            }
+
+            if (!execMigrationSql(db, QStringLiteral("DROP TABLE %1;").arg(legacyTable), error)) {
+                return false;
+            }
+        }
+    } else if (!createOutboundSyncQueueTable(db, error)) {
+        return false;
+    }
+
+    return recordMigration(db, 3, QStringLiteral("outbound_sync_queue"), now, error);
 }
 
 void logSqlFailure(const char* operation,
@@ -626,19 +756,14 @@ bool DLDatabaseManager::createTablesIfNeeded()
         { QStringLiteral(R"(
             CREATE TABLE IF NOT EXISTS outbound_sync_queue (
                 id TEXT PRIMARY KEY,
-                table_name TEXT NOT NULL,
-                record_id TEXT NOT NULL,
+                entity_type TEXT NOT NULL,
+                entity_id TEXT NOT NULL,
                 operation TEXT NOT NULL,
                 payload_json TEXT,
-                attempts INTEGER NOT NULL DEFAULT 0,
-                last_error TEXT,
                 created_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL,
-                deleted_at INTEGER,
-                server_updated_at INTEGER,
-                server_version INTEGER NOT NULL DEFAULT 0,
-                device_id TEXT,
-                dirty INTEGER NOT NULL DEFAULT 1
+                retry_count INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT,
+                pushed_at INTEGER
             );
         )"), {} }
     };
@@ -674,7 +799,8 @@ bool DLDatabaseManager::migrateSchemaIfNeeded()
         }
 
         if (alreadyApplied) {
-            return migrateLocalIdentityAndSyncStateTables(db, now, error);
+            return migrateLocalIdentityAndSyncStateTables(db, now, error)
+                && migrateOutboundSyncQueueTable(db, now, error);
         }
 
         if (!addColumnIfMissing(db, QStringLiteral("groups"), QStringLiteral("sync_id"), QStringLiteral("TEXT"), error)
@@ -958,7 +1084,8 @@ bool DLDatabaseManager::migrateSchemaIfNeeded()
         }
 
         if (!recordMigration(db, 1, QStringLiteral("sync_metadata_and_legacy_stats"), now, error)
-            || !migrateLocalIdentityAndSyncStateTables(db, now, error)) {
+            || !migrateLocalIdentityAndSyncStateTables(db, now, error)
+            || !migrateOutboundSyncQueueTable(db, now, error)) {
             return false;
         }
 
@@ -972,8 +1099,10 @@ bool DLDatabaseManager::createIndexesIfNeeded()
     const QList<DLSqlCommand> commands = {
         { QStringLiteral("DROP TRIGGER IF EXISTS trg_sync_state_id_after_insert;"), {} },
         { QStringLiteral("DROP TRIGGER IF EXISTS trg_device_identity_id_after_insert;"), {} },
+        { QStringLiteral("DROP TRIGGER IF EXISTS trg_outbound_sync_queue_id_after_insert;"), {} },
         { QStringLiteral("DROP INDEX IF EXISTS idx_sync_state_scope;"), {} },
         { QStringLiteral("DROP INDEX IF EXISTS idx_device_identity_device_id;"), {} },
+        { QStringLiteral("DROP INDEX IF EXISTS idx_outbound_sync_queue_record;"), {} },
         { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_words_group_id ON words(group_id);"), {} },
         { QStringLiteral("CREATE UNIQUE INDEX IF NOT EXISTS idx_words_sync_id ON words(sync_id) WHERE sync_id IS NOT NULL;"), {} },
         { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_words_dirty ON words(dirty) WHERE dirty = 1;"), {} },
@@ -998,7 +1127,7 @@ bool DLDatabaseManager::createIndexesIfNeeded()
         { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_app_settings_dirty ON app_settings(dirty) WHERE dirty = 1;"), {} },
         { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_app_settings_deleted_at ON app_settings(deleted_at);"), {} },
         { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_app_settings_server_updated_at ON app_settings(server_updated_at);"), {} },
-        { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_outbound_sync_queue_record ON outbound_sync_queue(table_name, record_id);"), {} },
+        { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_outbound_sync_queue_entity ON outbound_sync_queue(entity_type, entity_id);"), {} },
         { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_outbound_sync_queue_created_at ON outbound_sync_queue(created_at);"), {} },
         { QString(R"SQL(
             CREATE TRIGGER IF NOT EXISTS trg_groups_sync_id_after_insert
@@ -1048,16 +1177,6 @@ bool DLDatabaseManager::createIndexesIfNeeded()
                 WHERE rowid = NEW.rowid;
             END;
         )SQL"), {} },
-        { QString(R"SQL(
-            CREATE TRIGGER IF NOT EXISTS trg_outbound_sync_queue_id_after_insert
-            AFTER INSERT ON outbound_sync_queue
-            FOR EACH ROW
-            WHEN NEW.id IS NULL OR TRIM(NEW.id) = ''
-            BEGIN
-                UPDATE outbound_sync_queue SET id = )SQL") + sqliteUuidExpression() + QString(R"SQL(
-                WHERE rowid = NEW.rowid;
-            END;
-        )SQL"), {} }
     };
 
     return executeSqlBatch(commands);

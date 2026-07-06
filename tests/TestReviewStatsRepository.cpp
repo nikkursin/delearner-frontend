@@ -22,6 +22,7 @@ private slots:
     void incrementCorrectAnswerIncrementsCorrectCount();
     void incrementWrongAnswerIncrementsWrongCount();
     void lastReviewedAtIsUpdatedAfterAnswerIncrement();
+    void outboundQueueTracksReviewStatsChanges();
     void deletingWordRetainsReviewStatsForSync();
 
 private:
@@ -107,6 +108,29 @@ void TestReviewStatsRepository::lastReviewedAtIsUpdatedAfterAnswerIncrement()
     QVERIFY(stats.lastReviewedAt.isValid());
     QVERIFY(!stats.lastReviewedAt.isNull());
     QVERIFY(stats.lastReviewedAt.toLongLong() > 0);
+}
+
+void TestReviewStatsRepository::outboundQueueTracksReviewStatsChanges()
+{
+    const QString wordId = insertWord();
+    DLReviewStatsRepository repository(DLDatabaseManager::instance());
+
+    QVERIFY2(repository.incrementCorrectAnswer(wordId), qPrintable(DLDatabaseManager::instance().lastError()));
+
+    const QVariantList rows = DLDatabaseManager::instance().selectRows(QStringLiteral(R"(
+        SELECT entity_type, entity_id, operation, payload_json
+        FROM outbound_sync_queue
+        WHERE entity_type = 'word_review_stats'
+        ORDER BY rowid;
+    )"));
+    QCOMPARE(rows.size(), 1);
+
+    const DLWordReviewStats stats = repository.fetchStats(wordId);
+    const QVariantMap row = rows.first().toMap();
+    QCOMPARE(row.value(QStringLiteral("entity_id")).toString(), stats.id);
+    QCOMPARE(row.value(QStringLiteral("operation")).toString(), QStringLiteral("update"));
+    QVERIFY(row.value(QStringLiteral("payload_json")).toString().contains(QStringLiteral("correct_answers"))
+            || row.value(QStringLiteral("payload_json")).toString().contains(QStringLiteral("incrementedColumn")));
 }
 
 void TestReviewStatsRepository::deletingWordRetainsReviewStatsForSync()

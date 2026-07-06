@@ -155,6 +155,23 @@ void TestDatabaseManager::createTablesIfNeededCreatesRequiredTables()
                  qPrintable(QStringLiteral("Missing device_identity.%1").arg(columnName)));
     }
     QCOMPARE(DLDatabaseManager::instance().selectInt(QStringLiteral("SELECT COUNT(*) FROM pragma_table_info('device_identity');")), 4);
+
+    const QStringList outboundQueueColumns = {
+        QStringLiteral("id"),
+        QStringLiteral("entity_type"),
+        QStringLiteral("entity_id"),
+        QStringLiteral("operation"),
+        QStringLiteral("payload_json"),
+        QStringLiteral("created_at"),
+        QStringLiteral("retry_count"),
+        QStringLiteral("last_error"),
+        QStringLiteral("pushed_at")
+    };
+    for (const QString& columnName : outboundQueueColumns) {
+        QVERIFY2(columnExists(QStringLiteral("outbound_sync_queue"), columnName),
+                 qPrintable(QStringLiteral("Missing outbound_sync_queue.%1").arg(columnName)));
+    }
+    QCOMPARE(DLDatabaseManager::instance().selectInt(QStringLiteral("SELECT COUNT(*) FROM pragma_table_info('outbound_sync_queue');")), 9);
 }
 
 void TestDatabaseManager::createIndexesIfNeededCreatesExpectedIndexes()
@@ -183,7 +200,7 @@ void TestDatabaseManager::createIndexesIfNeededCreatesExpectedIndexes()
         QStringLiteral("idx_app_settings_dirty"),
         QStringLiteral("idx_app_settings_deleted_at"),
         QStringLiteral("idx_app_settings_server_updated_at"),
-        QStringLiteral("idx_outbound_sync_queue_record"),
+        QStringLiteral("idx_outbound_sync_queue_entity"),
         QStringLiteral("idx_outbound_sync_queue_created_at")
     };
 
@@ -303,6 +320,24 @@ void TestDatabaseManager::openDatabaseMigratesLegacySchema()
                 deleted_at REAL
             );
         )")));
+        QVERIFY(query.exec(QStringLiteral(R"(
+            CREATE TABLE outbound_sync_queue (
+                id TEXT PRIMARY KEY,
+                table_name TEXT NOT NULL,
+                record_id TEXT NOT NULL,
+                operation TEXT NOT NULL,
+                payload_json TEXT,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                deleted_at INTEGER,
+                server_updated_at INTEGER,
+                server_version INTEGER NOT NULL DEFAULT 0,
+                device_id TEXT,
+                dirty INTEGER NOT NULL DEFAULT 1
+            );
+        )")));
         QVERIFY(query.exec(QStringLiteral("INSERT INTO groups (id, name, color_hex, created_at) VALUES (1, 'Basics', '#112233', 7);")));
         QVERIFY(query.exec(QStringLiteral(R"(
             INSERT INTO words
@@ -314,6 +349,12 @@ void TestDatabaseManager::openDatabaseMigratesLegacySchema()
         )")));
         QVERIFY(query.exec(QStringLiteral("INSERT INTO verb_forms (word_id, form_key, form_value, created_at, updated_at, deleted_at) VALUES (1, 'praeteritum', 'ging', 10, 10, NULL);")));
         QVERIFY(query.exec(QStringLiteral("INSERT INTO verb_forms (word_id, form_key, form_value, created_at, updated_at, deleted_at) VALUES (1, 'partizip_ii', 'gegangen', 10, 10, NULL);")));
+        QVERIFY(query.exec(QStringLiteral(R"(
+            INSERT INTO outbound_sync_queue
+                (id, table_name, record_id, operation, payload_json, attempts, last_error, created_at, updated_at)
+            VALUES
+                ('queue-1', 'words', 'word-1', 'create', '{"id":"word-1"}', 2, 'temporary', 11, 12);
+        )")));
         db.close();
     }
     QSqlDatabase::removeDatabase(connectionName);
@@ -378,6 +419,24 @@ void TestDatabaseManager::openDatabaseMigratesLegacySchema()
 
     QCOMPARE(DLDatabaseManager::instance().selectInt(
                  QStringLiteral("SELECT COUNT(*) FROM schema_migrations WHERE version = 1 AND name = 'sync_metadata_and_legacy_stats';")),
+             1);
+
+    const QVariantMap queued = DLDatabaseManager::instance().selectOneRow(
+        QStringLiteral(R"(
+            SELECT entity_type, entity_id, operation, payload_json, retry_count, last_error, created_at, pushed_at
+            FROM outbound_sync_queue
+            WHERE id = 'queue-1';
+        )"));
+    QCOMPARE(queued.value(QStringLiteral("entity_type")).toString(), QStringLiteral("words"));
+    QCOMPARE(queued.value(QStringLiteral("entity_id")).toString(), QStringLiteral("word-1"));
+    QCOMPARE(queued.value(QStringLiteral("operation")).toString(), QStringLiteral("create"));
+    QCOMPARE(queued.value(QStringLiteral("payload_json")).toString(), QStringLiteral("{\"id\":\"word-1\"}"));
+    QCOMPARE(queued.value(QStringLiteral("retry_count")).toInt(), 2);
+    QCOMPARE(queued.value(QStringLiteral("last_error")).toString(), QStringLiteral("temporary"));
+    QCOMPARE(queued.value(QStringLiteral("created_at")).toLongLong(), 11);
+    QVERIFY(queued.value(QStringLiteral("pushed_at")).isNull());
+    QCOMPARE(DLDatabaseManager::instance().selectInt(
+                 QStringLiteral("SELECT COUNT(*) FROM schema_migrations WHERE version = 3 AND name = 'outbound_sync_queue';")),
              1);
 }
 

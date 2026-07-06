@@ -22,6 +22,7 @@ private slots:
     void fetchWordByIdReturnsCorrectData();
     void updateWordChangesCoreFields();
     void deleteWordRemovesWord();
+    void outboundQueueTracksWordCrud();
     void duplicateDetectionUsesNormalizedWords();
     void duplicateDetectionAllowsDifferentTranslations();
     void wordExistsDoesNotReportDuplicateOnQueryFailure();
@@ -127,6 +128,40 @@ void TestWordRepository::deleteWordRemovesWord()
     QVERIFY2(repository.deleteWord(wordId), qPrintable(DLDatabaseManager::instance().lastError()));
     QVERIFY(repository.fetchWordById(wordId).id.isEmpty());
     QCOMPARE(repository.getWordCount(), 0);
+}
+
+void TestWordRepository::outboundQueueTracksWordCrud()
+{
+    DLWordRepository repository(DLDatabaseManager::instance());
+    const QString wordId = repository.insertWord(word(QStringLiteral("Haus"), QStringLiteral("house"), QStringLiteral("Nomen"), QStringLiteral("das")));
+    QVERIFY2(!wordId.isEmpty(), qPrintable(DLDatabaseManager::instance().lastError()));
+
+    DLWord update = word(QStringLiteral("Baum"), QStringLiteral("tree"), QStringLiteral("Nomen"), QStringLiteral("der"));
+    update.id = wordId;
+    QVERIFY2(repository.updateWord(update), qPrintable(DLDatabaseManager::instance().lastError()));
+    QVERIFY2(repository.deleteWord(wordId), qPrintable(DLDatabaseManager::instance().lastError()));
+
+    const QVariantList rows = DLDatabaseManager::instance().selectRows(QStringLiteral(R"(
+        SELECT entity_type, entity_id, operation, payload_json
+        FROM outbound_sync_queue
+        ORDER BY rowid;
+    )"));
+    QCOMPARE(rows.size(), 3);
+
+    const QStringList operations = {
+        QStringLiteral("create"),
+        QStringLiteral("update"),
+        QStringLiteral("delete")
+    };
+    for (int i = 0; i < rows.size(); ++i) {
+        const QVariantMap row = rows.at(i).toMap();
+        QCOMPARE(row.value(QStringLiteral("entity_type")).toString(), QStringLiteral("words"));
+        QCOMPARE(row.value(QStringLiteral("entity_id")).toString(), wordId);
+        QCOMPARE(row.value(QStringLiteral("operation")).toString(), operations.at(i));
+    }
+    QVERIFY(rows.at(0).toMap().value(QStringLiteral("payload_json")).toString().contains(QStringLiteral("Haus")));
+    QVERIFY(rows.at(1).toMap().value(QStringLiteral("payload_json")).toString().contains(QStringLiteral("Baum")));
+    QVERIFY(rows.at(2).toMap().value(QStringLiteral("payload_json")).isNull());
 }
 
 void TestWordRepository::duplicateDetectionUsesNormalizedWords()
