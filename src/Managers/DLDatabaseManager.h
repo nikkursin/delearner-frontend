@@ -52,39 +52,38 @@ public:
     static QString normalizedText(const QString& value);
     static QVariant nullVariant();
 
-    int insertGroup(const QString& name,
-                    const QString& colorHex = QStringLiteral("#3366CC"));
-    bool updateGroup(int id,
+    QString insertGroup(const QString& name,
+                        const QString& colorHex = QStringLiteral("#3366CC"));
+    bool updateGroup(const QString& syncId,
                      const QString& name,
                      const QString& colorHex);
-    bool deleteGroup(int id);
+    bool deleteGroup(const QString& syncId);
     QVariantList fetchAllGroups();
-    QVariantMap fetchGroupById(int id);
+    QVariantMap fetchGroupById(const QString& syncId);
 
-    int insertWord(const QString& germanWord,
-                   const QString& article,
-                   const QString& partOfSpeech,
-                   const QString& nativeTranslation,
-                   const QString& examplePhraseDe = QString(),
-                   const QString& examplePhraseNative = QString(),
-                   int groupId = -1,
-                   const QString& syncId = QString(),
-                   const QString& pluralForm = QString(),
-                   const QString& praeteritumForm = QString(),
-                   const QString& partizipIIForm = QString(),
-                   const QString& positiveForm = QString(),
-                   const QString& comparativeForm = QString(),
-                   const QString& superlativeForm = QString());
+    QString insertWord(const QString& germanWord,
+                       const QString& article,
+                       const QString& partOfSpeech,
+                       const QString& nativeTranslation,
+                       const QString& examplePhraseDe = QString(),
+                       const QString& examplePhraseNative = QString(),
+                       const QString& groupSyncId = QString(),
+                       const QString& syncId = QString(),
+                       const QString& pluralForm = QString(),
+                       const QString& praeteritumForm = QString(),
+                       const QString& partizipIIForm = QString(),
+                       const QString& positiveForm = QString(),
+                       const QString& comparativeForm = QString(),
+                       const QString& superlativeForm = QString());
 
-    bool updateWord(int id,
+    bool updateWord(const QString& syncId,
                     const QString& germanWord,
                     const QString& article,
                     const QString& partOfSpeech,
                     const QString& nativeTranslation,
                     const QString& examplePhraseDe = QString(),
                     const QString& examplePhraseNative = QString(),
-                    int groupId = -1,
-                    const QString& syncId = QString(),
+                    const QString& groupSyncId = QString(),
                     const QString& pluralForm = QString(),
                     const QString& praeteritumForm = QString(),
                     const QString& partizipIIForm = QString(),
@@ -92,27 +91,27 @@ public:
                     const QString& comparativeForm = QString(),
                     const QString& superlativeForm = QString());
 
-    bool deleteWord(int id);
-    QVariantMap fetchWordById(int id);
+    bool deleteWord(const QString& syncId);
+    QVariantMap fetchWordById(const QString& syncId);
     bool wordExists(const QString& germanWord,
                     const QString& nativeTranslation,
-                    int excludingId = -1);
+                    const QString& excludingSyncId = QString());
     QVariantList fetchAllWords(const QString& sortMode = QStringLiteral("newest"),
-                               int groupId = -1);
+                               const QString& groupSyncId = QString());
     QVariantList searchWords(const QString& query,
-                             int groupId = -1);
-    QVariantList fetchWordsByGroup(int groupId);
+                             const QString& groupSyncId = QString());
+    QVariantList fetchWordsByGroup(const QString& groupSyncId);
     QVariantList fetchRandomWords(int limit,
-                                  int groupId = -1);
+                                  const QString& groupSyncId = QString());
     QVariantList fetchTranslationQuizWords(int limit,
-                                           int groupId = -1,
+                                           const QString& groupSyncId = QString(),
                                            const QString& partOfSpeech = QString());
-    QVariantList fetchNouns(int groupId = -1);
-    int getWordCount(int groupId = -1);
-    int getTranslationQuizWordCount(int groupId = -1,
+    QVariantList fetchNouns(const QString& groupSyncId = QString());
+    int getWordCount(const QString& groupSyncId = QString());
+    int getTranslationQuizWordCount(const QString& groupSyncId = QString(),
                                     const QString& partOfSpeech = QString());
     int getGroupCount();
-    int getNounCount(int groupId = -1);
+    int getNounCount(const QString& groupSyncId = QString());
     bool incrementCorrectAnswer(int wordId);
     bool incrementWrongAnswer(int wordId);
     QVariantMap getDatabaseStats();

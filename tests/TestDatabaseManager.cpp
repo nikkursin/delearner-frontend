@@ -146,10 +146,10 @@ void TestDatabaseManager::cleanDatabaseCreatesUuidIdentityColumns()
 
 void TestDatabaseManager::insertsPopulateUuidIdentities()
 {
-    const int groupId = DLDatabaseManager::instance().insertGroup(QStringLiteral("Basics"), QStringLiteral("#112233"));
-    QVERIFY(groupId > 0);
+    const QString groupId = DLDatabaseManager::instance().insertGroup(QStringLiteral("Basics"), QStringLiteral("#112233"));
+    QVERIFY(!groupId.isEmpty());
 
-    const int wordId = DLDatabaseManager::instance().insertWord(
+    const QString wordId = DLDatabaseManager::instance().insertWord(
         QStringLiteral("Haus"),
         QStringLiteral("das"),
         QStringLiteral("Nomen"),
@@ -157,16 +157,16 @@ void TestDatabaseManager::insertsPopulateUuidIdentities()
         QString(),
         QString(),
         groupId);
-    QVERIFY(wordId > 0);
+    QVERIFY(!wordId.isEmpty());
 
     const QVariantMap group = DLDatabaseManager::instance().selectOneRow(
-        QStringLiteral("SELECT sync_id FROM groups WHERE id = :id;"),
+        QStringLiteral("SELECT sync_id FROM groups WHERE sync_id = :id;"),
         {{ QStringLiteral(":id"), groupId }});
     const QVariantMap word = DLDatabaseManager::instance().selectOneRow(
-        QStringLiteral("SELECT sync_id, group_sync_id FROM words WHERE id = :id;"),
+        QStringLiteral("SELECT sync_id, group_sync_id FROM words WHERE sync_id = :id;"),
         {{ QStringLiteral(":id"), wordId }});
     const QVariantMap stats = DLDatabaseManager::instance().selectOneRow(
-        QStringLiteral("SELECT word_sync_id FROM word_review_stats WHERE word_id = :word_id;"),
+        QStringLiteral("SELECT word_sync_id FROM word_review_stats WHERE word_sync_id = :word_id;"),
         {{ QStringLiteral(":word_id"), wordId }});
 
     const QString groupSyncId = group.value(QStringLiteral("sync_id")).toString();
@@ -310,7 +310,7 @@ void TestDatabaseManager::openDatabaseMigratesLegacySchema()
     QCOMPARE(groups.first().toMap().value(QStringLiteral("name")).toString(), QStringLiteral("Basics"));
     QVERIFY(groups.first().toMap().value(QStringLiteral("updated_at")).toLongLong() > 0);
 
-    const QVariantList words = DLDatabaseManager::instance().fetchAllWords(QStringLiteral("newest"), -1);
+    const QVariantList words = DLDatabaseManager::instance().fetchAllWords(QStringLiteral("newest"));
     QCOMPARE(words.size(), 1);
     const QVariantMap word = words.first().toMap();
     QCOMPARE(word.value(QStringLiteral("german_word")).toString(), QStringLiteral("gehen"));
@@ -320,10 +320,10 @@ void TestDatabaseManager::openDatabaseMigratesLegacySchema()
 
 void TestDatabaseManager::deleteAllDataRemovesStoredData()
 {
-    const int groupId = DLDatabaseManager::instance().insertGroup(QStringLiteral("Basics"), QStringLiteral("#112233"));
-    QVERIFY(groupId > 0);
+    const QString groupId = DLDatabaseManager::instance().insertGroup(QStringLiteral("Basics"), QStringLiteral("#112233"));
+    QVERIFY(!groupId.isEmpty());
 
-    const int wordId = DLDatabaseManager::instance().insertWord(
+    const QString wordId = DLDatabaseManager::instance().insertWord(
         QStringLiteral("Haus"),
         QStringLiteral("das"),
         QStringLiteral("Nomen"),
@@ -331,7 +331,7 @@ void TestDatabaseManager::deleteAllDataRemovesStoredData()
         QString(),
         QString(),
         groupId);
-    QVERIFY(wordId > 0);
+    QVERIFY(!wordId.isEmpty());
 
     QVERIFY2(DLDatabaseManager::instance().deleteAllData(),
              qPrintable(DLDatabaseManager::instance().lastError()));

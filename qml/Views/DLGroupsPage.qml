@@ -13,8 +13,8 @@ DLAppPage {
     activeTab: "groups"
 
     property var groupsModel: []
-    property int editingGroupId: -1
-    property int pendingDeleteGroupId: -1
+    property string editingGroupId: ""
+    property string pendingDeleteGroupId: ""
     property string pendingDeleteGroupName: ""
     property string errorMessage: ""
     property string dialogErrorMessage: ""
@@ -72,7 +72,7 @@ DLAppPage {
     }
 
     function openCreateDialog() {
-        editingGroupId = -1
+        editingGroupId = ""
         dialogErrorMessage = ""
         selectedColor = colorOptions[0]
         groupNameField.text = ""
@@ -82,7 +82,7 @@ DLAppPage {
     }
 
     function openEditDialog(group) {
-        editingGroupId = Number(group.id || -1)
+        editingGroupId = group.id || ""
         dialogErrorMessage = ""
         selectedColor = groupColor(group)
         groupNameField.text = group.name || ""
@@ -101,10 +101,10 @@ DLAppPage {
         }
 
         var success = false
-        if (editingGroupId > 0) {
+        if (editingGroupId.length > 0) {
             success = appStateManager.updateGroup(editingGroupId, name, selectedColor)
         } else {
-            success = appStateManager.createGroup(name, selectedColor) > 0
+            success = appStateManager.createGroup(name, selectedColor).length > 0
         }
 
         if (!success) {
@@ -117,7 +117,7 @@ DLAppPage {
     }
 
     function confirmDelete(group) {
-        pendingDeleteGroupId = Number(group.id || -1)
+        pendingDeleteGroupId = group.id || ""
         pendingDeleteGroupName = group.name || ""
         deleteGroupDialog.open()
     }
@@ -128,7 +128,7 @@ DLAppPage {
             return
         }
 
-        pendingDeleteGroupId = -1
+        pendingDeleteGroupId = ""
         pendingDeleteGroupName = ""
         reloadGroups()
     }

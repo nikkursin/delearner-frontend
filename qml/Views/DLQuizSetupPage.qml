@@ -18,12 +18,12 @@ DLAppPage {
     property string quizTitle: "Quiz"
     property var groupOptions: [
         {
-            id: -1,
+            id: "",
             name: "All Words",
             count: 0
         }
     ]
-    property int selectedGroupId: -1
+    property string selectedGroupId: ""
     property int questionCount: 10
     property int availableCount: 0
     property string errorMessage: ""
@@ -68,12 +68,12 @@ DLAppPage {
     function loadGroups() {
         var groups = appStateManager.availableGroups();
         var options = [];
-        var allCount = appStateManager.availableQuizQuestionCount(quizType, -1, selectedPartOfSpeech);
+        var allCount = appStateManager.availableQuizQuestionCount(quizType, "", selectedPartOfSpeech);
         var previousSelection = selectedGroupId;
 
         if (allCount > 0) {
             options.push({
-                id: -1,
+                id: "",
                 name: "All Words",
                 count: allCount
             });
@@ -93,7 +93,7 @@ DLAppPage {
         }
 
         groupOptions = options;
-        selectedGroupId = options.length > 0 ? options[0].id : -1;
+        selectedGroupId = options.length > 0 ? options[0].id : "";
         for (var j = 0; j < options.length; ++j) {
             if (options[j].id === previousSelection) {
                 selectedGroupId = previousSelection;

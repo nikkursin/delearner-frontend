@@ -13,12 +13,12 @@ DLQuizSession::DLQuizSession(DLDatabaseManager& database)
 
 void DLQuizSession::start(const QString& quizType,
                           const QString& quizTitle,
-                          int groupId,
+                          const QString& groupSyncId,
                           const QList<DLQuizQuestion>& questions)
 {
     m_activeQuizType = quizType;
     m_activeQuizTitle = quizTitle;
-    m_groupId = groupId;
+    m_groupId = groupSyncId;
     m_questions = questions;
     m_currentQuestionIndex = 0;
     m_correctAnswerCount = 0;
@@ -33,7 +33,7 @@ void DLQuizSession::reset()
 {
     m_activeQuizType.clear();
     m_activeQuizTitle.clear();
-    m_groupId = -1;
+    m_groupId.clear();
     m_currentQuestionIndex = 0;
     m_correctAnswerCount = 0;
     m_wrongAnswerCount = 0;
@@ -100,8 +100,8 @@ QVariantMap DLQuizSession::submitAnswer(const QString& answer)
 
     DLReviewStatsRepository reviewStats(m_database);
     const bool statsUpdated = question.isCorrect
-        ? reviewStats.incrementCorrectAnswer(question.wordId)
-        : reviewStats.incrementWrongAnswer(question.wordId);
+        ? reviewStats.incrementCorrectAnswer(question.localWordId)
+        : reviewStats.incrementWrongAnswer(question.localWordId);
 
     if (question.isCorrect) {
         ++m_correctAnswerCount;

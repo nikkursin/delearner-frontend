@@ -12,7 +12,7 @@ struct DLQuizResult
     int correct = 0;
     int wrong = 0;
     int accuracy = 0;
-    int groupId = -1;
+    QString groupId;
 };
 
 #endif // DLQUIZRESULT_H

@@ -50,8 +50,9 @@ void TestGroupRepository::insertGroupReturnsValidId()
     group.name = QStringLiteral("Basics");
     group.colorHex = QStringLiteral("#123456");
 
-    const int groupId = repository.insertGroup(group);
-    QVERIFY2(groupId > 0, qPrintable(DLDatabaseManager::instance().lastError()));
+    const QString groupId = repository.insertGroup(group);
+    QVERIFY2(!groupId.isEmpty(), qPrintable(DLDatabaseManager::instance().lastError()));
+    QVERIFY(!QUuid(groupId).isNull());
 }
 
 void TestGroupRepository::fetchAllGroupsReturnsInsertedGroups()
@@ -62,8 +63,8 @@ void TestGroupRepository::fetchAllGroupsReturnsInsertedGroups()
     DLWordGroup b;
     b.name = QStringLiteral("Travel");
 
-    QVERIFY(repository.insertGroup(a) > 0);
-    QVERIFY(repository.insertGroup(b) > 0);
+    QVERIFY(!repository.insertGroup(a).isEmpty());
+    QVERIFY(!repository.insertGroup(b).isEmpty());
 
     const QList<DLWordGroup> groups = repository.fetchAllGroups();
     QCOMPARE(groups.size(), 2);
@@ -78,10 +79,10 @@ void TestGroupRepository::fetchGroupByIdReturnsCorrectGroup()
     group.name = QStringLiteral("Basics");
     group.colorHex = QStringLiteral("#445566");
 
-    const int groupId = repository.insertGroup(group);
+    const QString groupId = repository.insertGroup(group);
     const DLWordGroup fetched = repository.fetchGroupById(groupId);
 
-    QCOMPARE(fetched.id, groupId);
+    QCOMPARE(fetched.syncId, groupId);
     QCOMPARE(fetched.name, group.name);
     QCOMPARE(fetched.colorHex, group.colorHex);
 }
@@ -91,10 +92,10 @@ void TestGroupRepository::updateGroupChangesNameAndColor()
     DLGroupRepository repository(DLDatabaseManager::instance());
     DLWordGroup group;
     group.name = QStringLiteral("Basics");
-    const int groupId = repository.insertGroup(group);
+    const QString groupId = repository.insertGroup(group);
 
     DLWordGroup update;
-    update.id = groupId;
+    update.syncId = groupId;
     update.name = QStringLiteral("Grammar");
     update.colorHex = QStringLiteral("#AABBCC");
 
@@ -109,10 +110,10 @@ void TestGroupRepository::deleteGroupRemovesGroup()
     DLGroupRepository repository(DLDatabaseManager::instance());
     DLWordGroup group;
     group.name = QStringLiteral("Basics");
-    const int groupId = repository.insertGroup(group);
+    const QString groupId = repository.insertGroup(group);
 
     QVERIFY2(repository.deleteGroup(groupId), qPrintable(DLDatabaseManager::instance().lastError()));
-    QCOMPARE(repository.fetchGroupById(groupId).id, -1);
+    QVERIFY(repository.fetchGroupById(groupId).syncId.isEmpty());
     QCOMPARE(repository.getGroupCount(), 0);
 }
 
@@ -121,14 +122,14 @@ void TestGroupRepository::wordCountPerGroupWorks()
     DLGroupRepository repository(DLDatabaseManager::instance());
     DLWordGroup group;
     group.name = QStringLiteral("Basics");
-    const int groupId = repository.insertGroup(group);
+    const QString groupId = repository.insertGroup(group);
 
     QVERIFY(DLDatabaseManager::instance().insertWord(QStringLiteral("Haus"), QStringLiteral("das"),
                                                      QStringLiteral("Nomen"), QStringLiteral("house"),
-                                                     QString(), QString(), groupId) > 0);
+                                                     QString(), QString(), groupId).length() > 0);
     QVERIFY(DLDatabaseManager::instance().insertWord(QStringLiteral("gehen"), QString(),
                                                      QStringLiteral("Verb"), QStringLiteral("go"),
-                                                     QString(), QString(), groupId) > 0);
+                                                     QString(), QString(), groupId).length() > 0);
 
     QCOMPARE(repository.fetchGroupById(groupId).wordCount, 2);
 }

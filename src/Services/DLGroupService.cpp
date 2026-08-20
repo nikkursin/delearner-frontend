@@ -14,23 +14,23 @@ QVariantList DLGroupService::availableGroups()
     return m_database.fetchAllGroups();
 }
 
-int DLGroupService::createGroup(const QString& name, const QString& colorHex)
+QString DLGroupService::createGroup(const QString& name, const QString& colorHex)
 {
     const QString trimmedName = name.trimmed();
     if (trimmedName.isEmpty()) {
         m_lastError = QStringLiteral("Group name is required.");
         qCWarning(dlService) << "Rejected group creation: empty name";
-        return -1;
+        return {};
     }
 
-    const int newId = m_database.insertGroup(trimmedName, normalizedColor(colorHex));
-    m_lastError = newId < 0 ? m_database.lastError() : QString();
+    const QString newId = m_database.insertGroup(trimmedName, normalizedColor(colorHex));
+    m_lastError = newId.isEmpty() ? m_database.lastError() : QString();
     return newId;
 }
 
-bool DLGroupService::updateGroup(int id, const QString& name, const QString& colorHex)
+bool DLGroupService::updateGroup(const QString& syncId, const QString& name, const QString& colorHex)
 {
-    if (id <= 0) {
+    if (syncId.trimmed().isEmpty()) {
         m_lastError = QStringLiteral("Invalid group id.");
         qCWarning(dlService) << "Rejected group update: invalid id";
         return false;
@@ -43,20 +43,20 @@ bool DLGroupService::updateGroup(int id, const QString& name, const QString& col
         return false;
     }
 
-    const bool success = m_database.updateGroup(id, trimmedName, normalizedColor(colorHex));
+    const bool success = m_database.updateGroup(syncId.trimmed(), trimmedName, normalizedColor(colorHex));
     m_lastError = success ? QString() : m_database.lastError();
     return success;
 }
 
-bool DLGroupService::deleteGroup(int id)
+bool DLGroupService::deleteGroup(const QString& syncId)
 {
-    if (id <= 0) {
+    if (syncId.trimmed().isEmpty()) {
         m_lastError = QStringLiteral("Invalid group id.");
         qCWarning(dlService) << "Rejected group delete: invalid id";
         return false;
     }
 
-    const bool success = m_database.deleteGroup(id);
+    const bool success = m_database.deleteGroup(syncId.trimmed());
     m_lastError = success ? QString() : m_database.lastError();
     return success;
 }

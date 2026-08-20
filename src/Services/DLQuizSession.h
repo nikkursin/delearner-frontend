@@ -16,7 +16,7 @@ public:
 
     void start(const QString& quizType,
                const QString& quizTitle,
-               int groupId,
+               const QString& groupSyncId,
                const QList<DLQuizQuestion>& questions);
     void reset();
 
@@ -39,7 +39,7 @@ private:
     QString m_lastError;
     QString m_activeQuizType;
     QString m_activeQuizTitle;
-    int m_groupId = -1;
+    QString m_groupId;
     int m_currentQuestionIndex = 0;
     int m_correctAnswerCount = 0;
     int m_wrongAnswerCount = 0;

@@ -26,6 +26,7 @@ private slots:
 
 private:
     QString m_dbPath;
+    QString m_lastWordSyncId;
 
     int insertWord();
 };
@@ -53,7 +54,11 @@ int TestReviewStatsRepository::insertWord()
     word.nativeTranslation = QStringLiteral("house");
     word.partOfSpeech = QStringLiteral("Nomen");
     word.article = QStringLiteral("das");
-    return DLWordRepository(DLDatabaseManager::instance()).insertWord(word);
+    m_lastWordSyncId = DLWordRepository(DLDatabaseManager::instance()).insertWord(word);
+    return DLDatabaseManager::instance().selectInt(
+        QStringLiteral("SELECT id FROM words WHERE sync_id = :sync_id;"),
+        {{ QStringLiteral(":sync_id"), m_lastWordSyncId }},
+        -1);
 }
 
 void TestReviewStatsRepository::statsRowIsCreatedOrUpsertedForWord()
@@ -116,7 +121,7 @@ void TestReviewStatsRepository::deletingWordDeletesReviewStats()
     DLWordRepository words(DLDatabaseManager::instance());
 
     QVERIFY(stats.incrementWrongAnswer(wordId));
-    QVERIFY2(words.deleteWord(wordId), qPrintable(DLDatabaseManager::instance().lastError()));
+    QVERIFY2(words.deleteWord(m_lastWordSyncId), qPrintable(DLDatabaseManager::instance().lastError()));
     QCOMPARE(DLDatabaseManager::instance().selectInt(
                  QStringLiteral("SELECT COUNT(*) FROM word_review_stats WHERE word_id = :word_id;"),
                  {{ QStringLiteral(":word_id"), wordId }}),

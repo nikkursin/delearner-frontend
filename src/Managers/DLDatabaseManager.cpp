@@ -835,7 +835,7 @@ QVariant DLDatabaseManager::nullVariant()
     return QVariant();
 }
 
-int DLDatabaseManager::insertGroup(const QString& name, const QString& colorHex)
+QString DLDatabaseManager::insertGroup(const QString& name, const QString& colorHex)
 {
     DLWordGroup group;
     group.name = name;
@@ -843,18 +843,18 @@ int DLDatabaseManager::insertGroup(const QString& name, const QString& colorHex)
     return DLGroupRepository(*this).insertGroup(group);
 }
 
-bool DLDatabaseManager::updateGroup(int id, const QString& name, const QString& colorHex)
+bool DLDatabaseManager::updateGroup(const QString& syncId, const QString& name, const QString& colorHex)
 {
     DLWordGroup group;
-    group.id = id;
+    group.syncId = syncId;
     group.name = name;
     group.colorHex = colorHex;
     return DLGroupRepository(*this).updateGroup(group);
 }
 
-bool DLDatabaseManager::deleteGroup(int id)
+bool DLDatabaseManager::deleteGroup(const QString& syncId)
 {
-    return DLGroupRepository(*this).deleteGroup(id);
+    return DLGroupRepository(*this).deleteGroup(syncId);
 }
 
 QVariantList DLDatabaseManager::fetchAllGroups()
@@ -862,26 +862,26 @@ QVariantList DLDatabaseManager::fetchAllGroups()
     return DLModelMappers::groupsToList(DLGroupRepository(*this).fetchAllGroups());
 }
 
-QVariantMap DLDatabaseManager::fetchGroupById(int id)
+QVariantMap DLDatabaseManager::fetchGroupById(const QString& syncId)
 {
-    const DLWordGroup group = DLGroupRepository(*this).fetchGroupById(id);
+    const DLWordGroup group = DLGroupRepository(*this).fetchGroupById(syncId);
     return group.id < 0 ? QVariantMap() : DLModelMappers::groupToMap(group);
 }
 
-int DLDatabaseManager::insertWord(const QString& germanWord,
-                                  const QString& article,
-                                  const QString& partOfSpeech,
-                                  const QString& nativeTranslation,
-                                  const QString& examplePhraseDe,
-                                  const QString& examplePhraseNative,
-                                  int groupId,
-                                  const QString& syncId,
-                                  const QString& pluralForm,
-                                  const QString& praeteritumForm,
-                                  const QString& partizipIIForm,
-                                  const QString& positiveForm,
-                                  const QString& comparativeForm,
-                                  const QString& superlativeForm)
+QString DLDatabaseManager::insertWord(const QString& germanWord,
+                                      const QString& article,
+                                      const QString& partOfSpeech,
+                                      const QString& nativeTranslation,
+                                      const QString& examplePhraseDe,
+                                      const QString& examplePhraseNative,
+                                      const QString& groupSyncId,
+                                      const QString& syncId,
+                                      const QString& pluralForm,
+                                      const QString& praeteritumForm,
+                                      const QString& partizipIIForm,
+                                      const QString& positiveForm,
+                                      const QString& comparativeForm,
+                                      const QString& superlativeForm)
 {
     DLWord word;
     word.syncId = syncId;
@@ -891,7 +891,7 @@ int DLDatabaseManager::insertWord(const QString& germanWord,
     word.nativeTranslation = nativeTranslation;
     word.examplePhraseDe = examplePhraseDe;
     word.examplePhraseNative = examplePhraseNative;
-    word.groupId = groupId;
+    word.groupSyncId = groupSyncId;
     word.nounForms.pluralForm = pluralForm;
     word.verbForms.praeteritumForm = praeteritumForm;
     word.verbForms.partizipIIForm = partizipIIForm;
@@ -901,15 +901,14 @@ int DLDatabaseManager::insertWord(const QString& germanWord,
     return DLWordRepository(*this).insertWord(word);
 }
 
-bool DLDatabaseManager::updateWord(int id,
+bool DLDatabaseManager::updateWord(const QString& syncId,
                                    const QString& germanWord,
                                    const QString& article,
                                    const QString& partOfSpeech,
                                    const QString& nativeTranslation,
                                    const QString& examplePhraseDe,
                                    const QString& examplePhraseNative,
-                                   int groupId,
-                                   const QString& syncId,
+                                   const QString& groupSyncId,
                                    const QString& pluralForm,
                                    const QString& praeteritumForm,
                                    const QString& partizipIIForm,
@@ -918,7 +917,6 @@ bool DLDatabaseManager::updateWord(int id,
                                    const QString& superlativeForm)
 {
     DLWord word;
-    word.id = id;
     word.syncId = syncId;
     word.germanWord = germanWord;
     word.article = article;
@@ -926,7 +924,7 @@ bool DLDatabaseManager::updateWord(int id,
     word.nativeTranslation = nativeTranslation;
     word.examplePhraseDe = examplePhraseDe;
     word.examplePhraseNative = examplePhraseNative;
-    word.groupId = groupId;
+    word.groupSyncId = groupSyncId;
     word.nounForms.pluralForm = pluralForm;
     word.verbForms.praeteritumForm = praeteritumForm;
     word.verbForms.partizipIIForm = partizipIIForm;
@@ -936,60 +934,60 @@ bool DLDatabaseManager::updateWord(int id,
     return DLWordRepository(*this).updateWord(word);
 }
 
-bool DLDatabaseManager::deleteWord(int id)
+bool DLDatabaseManager::deleteWord(const QString& syncId)
 {
-    return DLWordRepository(*this).deleteWord(id);
+    return DLWordRepository(*this).deleteWord(syncId);
 }
 
-QVariantMap DLDatabaseManager::fetchWordById(int id)
+QVariantMap DLDatabaseManager::fetchWordById(const QString& syncId)
 {
-    const DLWord word = DLWordRepository(*this).fetchWordById(id);
+    const DLWord word = DLWordRepository(*this).fetchWordById(syncId);
     return word.id < 0 ? QVariantMap() : DLModelMappers::wordToMap(word);
 }
 
-bool DLDatabaseManager::wordExists(const QString& germanWord, const QString& nativeTranslation, int excludingId)
+bool DLDatabaseManager::wordExists(const QString& germanWord, const QString& nativeTranslation, const QString& excludingSyncId)
 {
-    return DLWordRepository(*this).wordExists(germanWord, nativeTranslation, excludingId);
+    return DLWordRepository(*this).wordExists(germanWord, nativeTranslation, excludingSyncId);
 }
 
-QVariantList DLDatabaseManager::fetchAllWords(const QString& sortMode, int groupId)
+QVariantList DLDatabaseManager::fetchAllWords(const QString& sortMode, const QString& groupSyncId)
 {
-    return DLModelMappers::wordsToList(DLWordRepository(*this).fetchAllWords(sortMode, groupId));
+    return DLModelMappers::wordsToList(DLWordRepository(*this).fetchAllWords(sortMode, groupSyncId));
 }
 
-QVariantList DLDatabaseManager::searchWords(const QString& query, int groupId)
+QVariantList DLDatabaseManager::searchWords(const QString& query, const QString& groupSyncId)
 {
-    return DLModelMappers::wordsToList(DLWordRepository(*this).searchWords(query, groupId));
+    return DLModelMappers::wordsToList(DLWordRepository(*this).searchWords(query, groupSyncId));
 }
 
-QVariantList DLDatabaseManager::fetchWordsByGroup(int groupId)
+QVariantList DLDatabaseManager::fetchWordsByGroup(const QString& groupSyncId)
 {
-    return fetchAllWords(QStringLiteral("newest"), groupId);
+    return fetchAllWords(QStringLiteral("newest"), groupSyncId);
 }
 
-QVariantList DLDatabaseManager::fetchRandomWords(int limit, int groupId)
+QVariantList DLDatabaseManager::fetchRandomWords(int limit, const QString& groupSyncId)
 {
-    return DLModelMappers::wordsToList(DLQuizRepository(*this).fetchRandomWords(limit, groupId));
+    return DLModelMappers::wordsToList(DLQuizRepository(*this).fetchRandomWords(limit, groupSyncId));
 }
 
-QVariantList DLDatabaseManager::fetchTranslationQuizWords(int limit, int groupId, const QString& partOfSpeech)
+QVariantList DLDatabaseManager::fetchTranslationQuizWords(int limit, const QString& groupSyncId, const QString& partOfSpeech)
 {
-    return DLModelMappers::wordsToList(DLQuizRepository(*this).fetchTranslationQuizWords(limit, groupId, partOfSpeech));
+    return DLModelMappers::wordsToList(DLQuizRepository(*this).fetchTranslationQuizWords(limit, groupSyncId, partOfSpeech));
 }
 
-QVariantList DLDatabaseManager::fetchNouns(int groupId)
+QVariantList DLDatabaseManager::fetchNouns(const QString& groupSyncId)
 {
-    return DLModelMappers::wordsToList(DLQuizRepository(*this).fetchNouns(groupId));
+    return DLModelMappers::wordsToList(DLQuizRepository(*this).fetchNouns(groupSyncId));
 }
 
-int DLDatabaseManager::getWordCount(int groupId)
+int DLDatabaseManager::getWordCount(const QString& groupSyncId)
 {
-    return DLWordRepository(*this).getWordCount(groupId);
+    return DLWordRepository(*this).getWordCount(groupSyncId);
 }
 
-int DLDatabaseManager::getTranslationQuizWordCount(int groupId, const QString& partOfSpeech)
+int DLDatabaseManager::getTranslationQuizWordCount(const QString& groupSyncId, const QString& partOfSpeech)
 {
-    return DLQuizRepository(*this).getTranslationQuizWordCount(groupId, partOfSpeech);
+    return DLQuizRepository(*this).getTranslationQuizWordCount(groupSyncId, partOfSpeech);
 }
 
 int DLDatabaseManager::getGroupCount()
@@ -997,9 +995,9 @@ int DLDatabaseManager::getGroupCount()
     return DLGroupRepository(*this).getGroupCount();
 }
 
-int DLDatabaseManager::getNounCount(int groupId)
+int DLDatabaseManager::getNounCount(const QString& groupSyncId)
 {
-    return DLQuizRepository(*this).getNounCount(groupId);
+    return DLQuizRepository(*this).getNounCount(groupSyncId);
 }
 
 bool DLDatabaseManager::incrementCorrectAnswer(int wordId)

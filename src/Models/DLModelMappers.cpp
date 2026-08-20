@@ -61,7 +61,8 @@ DLWord DLModelMappers::wordFromMap(const QVariantMap& map)
 QVariantMap DLModelMappers::wordToMap(const DLWord& word)
 {
     QVariantMap map;
-    map.insert(QStringLiteral("id"), word.id);
+    map.insert(QStringLiteral("id"), nullableString(word.syncId));
+    map.insert(QStringLiteral("local_id"), word.id);
     map.insert(QStringLiteral("sync_id"), nullableString(word.syncId));
     map.insert(QStringLiteral("syncId"), nullableString(word.syncId));
     map.insert(QStringLiteral("german_word"), word.germanWord);
@@ -72,7 +73,8 @@ QVariantMap DLModelMappers::wordToMap(const DLWord& word)
     map.insert(QStringLiteral("normalized_native_translation"), word.normalizedNativeTranslation);
     map.insert(QStringLiteral("example_phrase_de"), nullableString(word.examplePhraseDe));
     map.insert(QStringLiteral("example_phrase_native"), nullableString(word.examplePhraseNative));
-    map.insert(QStringLiteral("group_id"), word.groupId >= 0 ? QVariant(word.groupId) : QVariant());
+    map.insert(QStringLiteral("group_id"), nullableString(word.groupSyncId));
+    map.insert(QStringLiteral("local_group_id"), word.groupId >= 0 ? QVariant(word.groupId) : QVariant());
     map.insert(QStringLiteral("group_sync_id"), nullableString(word.groupSyncId));
     map.insert(QStringLiteral("groupSyncId"), nullableString(word.groupSyncId));
     map.insert(QStringLiteral("notes"), nullableString(word.notes));
@@ -127,7 +129,8 @@ DLWordGroup DLModelMappers::groupFromMap(const QVariantMap& map)
 QVariantMap DLModelMappers::groupToMap(const DLWordGroup& group)
 {
     QVariantMap map;
-    map.insert(QStringLiteral("id"), group.id);
+    map.insert(QStringLiteral("id"), nullableString(group.syncId));
+    map.insert(QStringLiteral("local_id"), group.id);
     map.insert(QStringLiteral("sync_id"), nullableString(group.syncId));
     map.insert(QStringLiteral("syncId"), nullableString(group.syncId));
     map.insert(QStringLiteral("name"), group.name);

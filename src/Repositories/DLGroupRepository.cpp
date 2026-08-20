@@ -11,7 +11,7 @@ DLGroupRepository::DLGroupRepository(DLDatabaseManager& database)
 {
 }
 
-int DLGroupRepository::insertGroup(const DLWordGroup& group)
+QString DLGroupRepository::insertGroup(const DLWordGroup& group)
 {
     const qint64 now = DLDatabaseManager::currentUnixTime();
     const QString syncId = group.syncId.trimmed().isEmpty()
@@ -31,10 +31,11 @@ int DLGroupRepository::insertGroup(const DLWordGroup& group)
         });
     if (newId < 0) {
         qCWarning(dlRepo) << "Failed to insert group:" << m_database.lastError();
+        return {};
     } else {
-        qCDebug(dlRepo) << "Inserted group with id" << newId;
+        qCDebug(dlRepo) << "Inserted group with sync id" << syncId;
     }
-    return newId;
+    return syncId;
 }
 
 bool DLGroupRepository::updateGroup(const DLWordGroup& group)
@@ -45,27 +46,27 @@ bool DLGroupRepository::updateGroup(const DLWordGroup& group)
             SET name = :name,
                 color_hex = :color_hex,
                 updated_at = :updated_at
-            WHERE id = :id;
+            WHERE sync_id = :sync_id;
         )"),
         {
-            { QStringLiteral(":id"), group.id },
+            { QStringLiteral(":sync_id"), group.syncId },
             { QStringLiteral(":name"), group.name },
             { QStringLiteral(":color_hex"), group.colorHex.isEmpty() ? QStringLiteral("#3366CC") : group.colorHex },
             { QStringLiteral(":updated_at"), DLDatabaseManager::currentUnixTime() }
         });
     if (!success) {
-        qCWarning(dlRepo) << "Failed to update group" << group.id << ":" << m_database.lastError();
+        qCWarning(dlRepo) << "Failed to update group" << group.syncId << ":" << m_database.lastError();
     }
     return success;
 }
 
-bool DLGroupRepository::deleteGroup(int id)
+bool DLGroupRepository::deleteGroup(const QString& syncId)
 {
     const bool success = m_database.executeSql(
-        QStringLiteral("DELETE FROM groups WHERE id = :id;"),
-        {{ QStringLiteral(":id"), id }});
+        QStringLiteral("DELETE FROM groups WHERE sync_id = :sync_id;"),
+        {{ QStringLiteral(":sync_id"), syncId }});
     if (!success) {
-        qCWarning(dlRepo) << "Failed to delete group" << id << ":" << m_database.lastError();
+        qCWarning(dlRepo) << "Failed to delete group" << syncId << ":" << m_database.lastError();
     }
     return success;
 }
@@ -87,7 +88,7 @@ QList<DLWordGroup> DLGroupRepository::fetchAllGroups()
     return groups;
 }
 
-DLWordGroup DLGroupRepository::fetchGroupById(int id)
+DLWordGroup DLGroupRepository::fetchGroupById(const QString& syncId)
 {
     const QVariantMap row = m_database.selectOneRow(
         QStringLiteral(R"(
@@ -95,9 +96,9 @@ DLWordGroup DLGroupRepository::fetchGroupById(int id)
                    g.sync_id,
                    (SELECT COUNT(*) FROM words WHERE group_id = g.id AND deleted_at IS NULL) AS word_count
             FROM groups g
-            WHERE g.id = :id;
+            WHERE g.sync_id = :sync_id;
         )"),
-        {{ QStringLiteral(":id"), id }});
+        {{ QStringLiteral(":sync_id"), syncId }});
 
     return DLModelMappers::groupFromMap(row);
 }

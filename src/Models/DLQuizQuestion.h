@@ -6,7 +6,8 @@
 
 struct DLQuizQuestion
 {
-    int wordId = -1;
+    QString wordId;
+    int localWordId = -1;
     QString quizType;
     QString instruction;
     QString prompt;

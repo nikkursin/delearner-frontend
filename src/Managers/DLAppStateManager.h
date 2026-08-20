@@ -17,7 +17,7 @@ class DLAppStateManager : public QObject
 
     Q_PROPERTY(DLScreen currentScreen READ currentScreen NOTIFY currentScreenChanged)
     Q_PROPERTY(QString lastError READ lastError NOTIFY lastErrorChanged)
-    Q_PROPERTY(int selectedWordId READ selectedWordId NOTIFY selectedWordIdChanged)
+    Q_PROPERTY(QString selectedWordId READ selectedWordId NOTIFY selectedWordIdChanged)
 public:
     enum DLScreen
     {
@@ -44,7 +44,7 @@ public:
 
     DLScreen currentScreen() const;
     QString lastError() const;
-    int selectedWordId() const;
+    QString selectedWordId() const;
 
     Q_INVOKABLE void goStartupLoadingPage();
     Q_INVOKABLE void goWordsPage();
@@ -60,38 +60,38 @@ public:
     Q_INVOKABLE void goSettingsPage();
 
     Q_INVOKABLE QVariantList availableGroups();
-    Q_INVOKABLE int createGroup(const QString& name, const QString& colorHex = QStringLiteral("#337fe6"));
-    Q_INVOKABLE bool updateGroup(int id, const QString& name, const QString& colorHex = QStringLiteral("#337fe6"));
-    Q_INVOKABLE bool deleteGroup(int id);
-    Q_INVOKABLE QVariantList loadWords(const QString& sortMode = QStringLiteral("newest"), int groupId = -1);
-    Q_INVOKABLE QVariantList searchWords(const QString& query, const QString& sortMode = QStringLiteral("newest"), int groupId = -1);
-    Q_INVOKABLE int wordCount(int groupId = -1);
+    Q_INVOKABLE QString createGroup(const QString& name, const QString& colorHex = QStringLiteral("#337fe6"));
+    Q_INVOKABLE bool updateGroup(const QString& syncId, const QString& name, const QString& colorHex = QStringLiteral("#337fe6"));
+    Q_INVOKABLE bool deleteGroup(const QString& syncId);
+    Q_INVOKABLE QVariantList loadWords(const QString& sortMode = QStringLiteral("newest"), const QString& groupSyncId = QString());
+    Q_INVOKABLE QVariantList searchWords(const QString& query, const QString& sortMode = QStringLiteral("newest"), const QString& groupSyncId = QString());
+    Q_INVOKABLE int wordCount(const QString& groupSyncId = QString());
     Q_INVOKABLE int groupCount();
     Q_INVOKABLE qint64 databaseSize();
     Q_INVOKABLE QVariantMap databaseStats();
-    Q_INVOKABLE QVariantMap wordById(int id);
-    Q_INVOKABLE int createWord(const QVariantMap& wordData);
-    Q_INVOKABLE bool updateWord(int id, const QVariantMap& wordData);
-    Q_INVOKABLE bool deleteWord(int id);
+    Q_INVOKABLE QVariantMap wordById(const QString& syncId);
+    Q_INVOKABLE QString createWord(const QVariantMap& wordData);
+    Q_INVOKABLE bool updateWord(const QString& syncId, const QVariantMap& wordData);
+    Q_INVOKABLE bool deleteWord(const QString& syncId);
     Q_INVOKABLE bool exportVocabularyDatabase();
     Q_INVOKABLE bool exportDatabase(const QString& targetPath);
     Q_INVOKABLE bool importDatabaseReplace(const QString& sourcePath);
     Q_INVOKABLE bool importDatabaseMerge(const QString& sourcePath);
     Q_INVOKABLE bool deleteAllData();
-    Q_INVOKABLE void openWordDetails(int id);
-    Q_INVOKABLE void openEditWord(int id);
+    Q_INVOKABLE void openWordDetails(const QString& syncId);
+    Q_INVOKABLE void openEditWord(const QString& syncId);
 
     Q_INVOKABLE QVariantList availableQuizModes();
     Q_INVOKABLE int availableQuizQuestionCount(const QString& type,
-                                               int groupId = -1,
+                                               const QString& groupSyncId = QString(),
                                                const QString& partOfSpeech = QString());
     Q_INVOKABLE QString selectedQuizType() const;
     Q_INVOKABLE bool canStartQuiz(const QString& type,
-                                  int groupId = -1,
+                                  const QString& groupSyncId = QString(),
                                   int questionCount = 10,
                                   const QString& partOfSpeech = QString());
     Q_INVOKABLE bool startQuiz(const QString& type,
-                               int groupId = -1,
+                               const QString& groupSyncId = QString(),
                                int questionCount = 10,
                                const QString& partOfSpeech = QString());
     Q_INVOKABLE QVariantMap currentQuizQuestion() const;
@@ -113,13 +113,13 @@ signals:
 private:
     void navigateTo(const DLScreen& screen);
     void setLastError(const QString& error);
-    void setSelectedWordId(int id);
+    void setSelectedWordId(const QString& syncId);
     QString localPathFromUrlOrPath(const QString& value) const;
 
     DLScreen m_currentScreen = StartupLoadingPage;
     QString m_lastError;
     QString m_databasePath;
-    int m_selectedWordId = -1;
+    QString m_selectedWordId;
     std::unique_ptr<DLWordService> m_wordService;
     std::unique_ptr<DLGroupService> m_groupService;
     std::unique_ptr<DLQuizService> m_quizService;
