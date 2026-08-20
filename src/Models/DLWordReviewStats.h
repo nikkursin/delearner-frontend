@@ -2,11 +2,13 @@
 #define DLWORDREVIEWSTATS_H
 
 #include <QVariant>
+#include <QString>
 #include <QtGlobal>
 
 struct DLWordReviewStats
 {
     int wordId = -1;
+    QString wordSyncId;
     int correctAnswers = 0;
     int wrongAnswers = 0;
     QVariant lastReviewedAt;

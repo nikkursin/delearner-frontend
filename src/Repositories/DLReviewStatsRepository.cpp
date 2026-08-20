@@ -22,7 +22,7 @@ DLWordReviewStats DLReviewStatsRepository::fetchStats(int wordId)
 {
     const QVariantMap row = m_database.selectOneRow(
         QStringLiteral(R"(
-            SELECT word_id, correct_answers, wrong_answers, last_reviewed_at,
+            SELECT word_id, word_sync_id, correct_answers, wrong_answers, last_reviewed_at,
                    ease_factor, interval_days, due_at, updated_at
             FROM word_review_stats
             WHERE word_id = :word_id;
@@ -31,6 +31,7 @@ DLWordReviewStats DLReviewStatsRepository::fetchStats(int wordId)
 
     DLWordReviewStats stats;
     stats.wordId = row.value(QStringLiteral("word_id"), wordId).toInt();
+    stats.wordSyncId = row.value(QStringLiteral("word_sync_id")).toString();
     stats.correctAnswers = row.value(QStringLiteral("correct_answers"), 0).toInt();
     stats.wrongAnswers = row.value(QStringLiteral("wrong_answers"), 0).toInt();
     stats.lastReviewedAt = row.value(QStringLiteral("last_reviewed_at"));
@@ -47,12 +48,14 @@ bool DLReviewStatsRepository::upsertStats(const DLWordReviewStats& stats)
     const bool success = m_database.executeSql(
         QStringLiteral(R"(
             INSERT INTO word_review_stats
-                (word_id, correct_answers, wrong_answers, last_reviewed_at,
+                (word_id, word_sync_id, correct_answers, wrong_answers, last_reviewed_at,
                  ease_factor, interval_days, due_at, updated_at)
             VALUES
-                (:word_id, :correct_answers, :wrong_answers, :last_reviewed_at,
+                (:word_id, COALESCE(NULLIF(:word_sync_id, ''), (SELECT sync_id FROM words WHERE id = :word_id)),
+                 :correct_answers, :wrong_answers, :last_reviewed_at,
                  :ease_factor, :interval_days, :due_at, :updated_at)
             ON CONFLICT(word_id) DO UPDATE SET
+                word_sync_id = excluded.word_sync_id,
                 correct_answers = excluded.correct_answers,
                 wrong_answers = excluded.wrong_answers,
                 last_reviewed_at = excluded.last_reviewed_at,
@@ -63,6 +66,7 @@ bool DLReviewStatsRepository::upsertStats(const DLWordReviewStats& stats)
         )"),
         {
             { QStringLiteral(":word_id"), stats.wordId },
+            { QStringLiteral(":word_sync_id"), stats.wordSyncId },
             { QStringLiteral(":correct_answers"), stats.correctAnswers },
             { QStringLiteral(":wrong_answers"), stats.wrongAnswers },
             { QStringLiteral(":last_reviewed_at"), stats.lastReviewedAt },
@@ -83,11 +87,12 @@ bool DLReviewStatsRepository::incrementAnswer(int wordId, const QString& columnN
     const bool success = m_database.executeSql(
         QStringLiteral(R"(
             INSERT INTO word_review_stats
-                (word_id, correct_answers, wrong_answers, last_reviewed_at,
+                (word_id, word_sync_id, correct_answers, wrong_answers, last_reviewed_at,
                  ease_factor, interval_days, due_at, updated_at)
             VALUES
-                (:word_id, %1, %2, :reviewed_at, 2.5, 0, NULL, :reviewed_at)
+                (:word_id, (SELECT sync_id FROM words WHERE id = :word_id), %1, %2, :reviewed_at, 2.5, 0, NULL, :reviewed_at)
             ON CONFLICT(word_id) DO UPDATE SET
+                word_sync_id = excluded.word_sync_id,
                 %3 = word_review_stats.%3 + 1,
                 last_reviewed_at = excluded.last_reviewed_at,
                 updated_at = excluded.updated_at;

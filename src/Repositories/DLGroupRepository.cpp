@@ -4,6 +4,8 @@
 #include "DLLogging.h"
 #include "../Models/DLModelMappers.h"
 
+#include <QUuid>
+
 DLGroupRepository::DLGroupRepository(DLDatabaseManager& database)
     : m_database(database)
 {
@@ -12,12 +14,16 @@ DLGroupRepository::DLGroupRepository(DLDatabaseManager& database)
 int DLGroupRepository::insertGroup(const DLWordGroup& group)
 {
     const qint64 now = DLDatabaseManager::currentUnixTime();
+    const QString syncId = group.syncId.trimmed().isEmpty()
+        ? QUuid::createUuid().toString(QUuid::WithoutBraces)
+        : group.syncId.trimmed();
     const int newId = m_database.executeInsert(
         QStringLiteral(R"(
-            INSERT INTO groups (name, color_hex, created_at, updated_at)
-            VALUES (:name, :color_hex, :created_at, :updated_at);
+            INSERT INTO groups (sync_id, name, color_hex, created_at, updated_at)
+            VALUES (:sync_id, :name, :color_hex, :created_at, :updated_at);
         )"),
         {
+            { QStringLiteral(":sync_id"), syncId },
             { QStringLiteral(":name"), group.name },
             { QStringLiteral(":color_hex"), group.colorHex.isEmpty() ? QStringLiteral("#3366CC") : group.colorHex },
             { QStringLiteral(":created_at"), now },
@@ -68,6 +74,7 @@ QList<DLWordGroup> DLGroupRepository::fetchAllGroups()
 {
     const QVariantList rows = m_database.selectRows(QStringLiteral(R"(
         SELECT g.id, g.name, g.color_hex, g.created_at, g.updated_at,
+               g.sync_id,
                (SELECT COUNT(*) FROM words WHERE group_id = g.id AND deleted_at IS NULL) AS word_count
         FROM groups g
         ORDER BY g.name;
@@ -85,6 +92,7 @@ DLWordGroup DLGroupRepository::fetchGroupById(int id)
     const QVariantMap row = m_database.selectOneRow(
         QStringLiteral(R"(
             SELECT g.id, g.name, g.color_hex, g.created_at, g.updated_at,
+                   g.sync_id,
                    (SELECT COUNT(*) FROM words WHERE group_id = g.id AND deleted_at IS NULL) AS word_count
             FROM groups g
             WHERE g.id = :id;

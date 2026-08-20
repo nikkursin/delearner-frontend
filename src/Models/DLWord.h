@@ -11,6 +11,7 @@
 struct DLWord
 {
     int id = -1;
+    QString syncId;
     QString germanWord;
     QString normalizedGermanWord;
     QString article;
@@ -20,6 +21,7 @@ struct DLWord
     QString examplePhraseDe;
     QString examplePhraseNative;
     int groupId = -1;
+    QString groupSyncId;
     QString notes;
     qint64 createdAt = 0;
     qint64 updatedAt = 0;

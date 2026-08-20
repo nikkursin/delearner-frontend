@@ -7,6 +7,7 @@
 struct DLWordGroup
 {
     int id = -1;
+    QString syncId;
     QString name;
     QString colorHex = QStringLiteral("#3366CC");
     qint64 createdAt = 0;

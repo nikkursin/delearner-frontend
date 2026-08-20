@@ -3,6 +3,7 @@
 #include <QSqlDatabase>
 #include <QSqlError>
 #include <QSqlQuery>
+#include <QUuid>
 
 #include "DLDatabaseManager.h"
 #include "DLLogging.h"
@@ -16,10 +17,10 @@ DLWordRepository::DLWordRepository(DLDatabaseManager& database)
 QString DLWordRepository::wordSelectColumns()
 {
     return QStringLiteral(
-        "w.id, NULL AS sync_id, NULL AS syncId, "
+        "w.id, w.sync_id, w.sync_id AS syncId, "
         "w.german_word, w.normalized_german_word, w.article, w.part_of_speech, "
         "w.native_translation, w.normalized_native_translation, "
-        "w.example_phrase_de, w.example_phrase_native, w.group_id, w.notes, "
+        "w.example_phrase_de, w.example_phrase_native, w.group_id, w.group_sync_id, w.group_sync_id AS groupSyncId, w.notes, "
         "nf.plural_form, nf.plural_form AS pluralForm, "
         "vf.praeteritum_form, vf.praeteritum_form AS praeteritumForm, "
         "vf.partizip_ii_form, vf.partizip_ii_form AS partizipIIForm, "
@@ -56,19 +57,35 @@ int DLWordRepository::insertWord(const DLWord& word)
     int newId = -1;
     const bool ok = m_database.transaction([&](QSqlDatabase& db, QString* error) {
         const qint64 now = DLDatabaseManager::currentUnixTime();
+        const QString syncId = word.syncId.trimmed().isEmpty()
+            ? QUuid::createUuid().toString(QUuid::WithoutBraces)
+            : word.syncId.trimmed();
+        QString groupSyncId;
+        if (word.groupId >= 0) {
+            QSqlQuery groupQuery(db);
+            groupQuery.prepare(QStringLiteral("SELECT sync_id FROM groups WHERE id = :id;"));
+            groupQuery.bindValue(QStringLiteral(":id"), word.groupId);
+            if (!bindAndExec(groupQuery, error)) {
+                return false;
+            }
+            if (groupQuery.next()) {
+                groupSyncId = groupQuery.value(0).toString();
+            }
+        }
         QSqlQuery query(db);
         query.prepare(QStringLiteral(R"(
             INSERT INTO words
-                (german_word, normalized_german_word, article, part_of_speech,
+                (sync_id, german_word, normalized_german_word, article, part_of_speech,
                  native_translation, normalized_native_translation,
-                 example_phrase_de, example_phrase_native, group_id,
+                 example_phrase_de, example_phrase_native, group_id, group_sync_id,
                  notes, created_at, updated_at, deleted_at)
             VALUES
-                (:german_word, :normalized_german_word, :article, :part_of_speech,
+                (:sync_id, :german_word, :normalized_german_word, :article, :part_of_speech,
                  :native_translation, :normalized_native_translation,
-                 :example_phrase_de, :example_phrase_native, :group_id,
+                 :example_phrase_de, :example_phrase_native, :group_id, :group_sync_id,
                  :notes, :created_at, :updated_at, NULL);
         )"));
+        query.bindValue(QStringLiteral(":sync_id"), syncId);
         query.bindValue(QStringLiteral(":german_word"), word.germanWord);
         query.bindValue(QStringLiteral(":normalized_german_word"), DLDatabaseManager::normalizedText(word.germanWord));
         query.bindValue(QStringLiteral(":article"), word.article.trimmed().isEmpty() ? DLDatabaseManager::nullVariant() : QVariant(word.article.trimmed()));
@@ -78,6 +95,7 @@ int DLWordRepository::insertWord(const DLWord& word)
         query.bindValue(QStringLiteral(":example_phrase_de"), word.examplePhraseDe.trimmed().isEmpty() ? DLDatabaseManager::nullVariant() : QVariant(word.examplePhraseDe.trimmed()));
         query.bindValue(QStringLiteral(":example_phrase_native"), word.examplePhraseNative.trimmed().isEmpty() ? DLDatabaseManager::nullVariant() : QVariant(word.examplePhraseNative.trimmed()));
         query.bindValue(QStringLiteral(":group_id"), word.groupId >= 0 ? QVariant(word.groupId) : DLDatabaseManager::nullVariant());
+        query.bindValue(QStringLiteral(":group_sync_id"), groupSyncId.isEmpty() ? DLDatabaseManager::nullVariant() : QVariant(groupSyncId));
         query.bindValue(QStringLiteral(":notes"), word.notes.trimmed().isEmpty() ? DLDatabaseManager::nullVariant() : QVariant(word.notes.trimmed()));
         query.bindValue(QStringLiteral(":created_at"), now);
         query.bindValue(QStringLiteral(":updated_at"), now);
@@ -91,11 +109,12 @@ int DLWordRepository::insertWord(const DLWord& word)
         QSqlQuery stats(db);
         stats.prepare(QStringLiteral(R"(
             INSERT INTO word_review_stats
-                (word_id, correct_answers, wrong_answers, last_reviewed_at,
+                (word_id, word_sync_id, correct_answers, wrong_answers, last_reviewed_at,
                  ease_factor, interval_days, due_at, updated_at)
-            VALUES (:word_id, 0, 0, NULL, 2.5, 0, NULL, :updated_at);
+            VALUES (:word_id, :word_sync_id, 0, 0, NULL, 2.5, 0, NULL, :updated_at);
         )"));
         stats.bindValue(QStringLiteral(":word_id"), newId);
+        stats.bindValue(QStringLiteral(":word_sync_id"), syncId);
         stats.bindValue(QStringLiteral(":updated_at"), now);
         if (!bindAndExec(stats, error)) {
             return false;
@@ -147,6 +166,7 @@ bool DLWordRepository::updateWord(const DLWord& word)
                 example_phrase_de = :example_phrase_de,
                 example_phrase_native = :example_phrase_native,
                 group_id = :group_id,
+                group_sync_id = :group_sync_id,
                 notes = :notes,
                 updated_at = :updated_at
             WHERE id = :id;
@@ -161,6 +181,17 @@ bool DLWordRepository::updateWord(const DLWord& word)
         query.bindValue(QStringLiteral(":example_phrase_de"), word.examplePhraseDe.trimmed().isEmpty() ? DLDatabaseManager::nullVariant() : QVariant(word.examplePhraseDe.trimmed()));
         query.bindValue(QStringLiteral(":example_phrase_native"), word.examplePhraseNative.trimmed().isEmpty() ? DLDatabaseManager::nullVariant() : QVariant(word.examplePhraseNative.trimmed()));
         query.bindValue(QStringLiteral(":group_id"), word.groupId >= 0 ? QVariant(word.groupId) : DLDatabaseManager::nullVariant());
+        if (word.groupId >= 0) {
+            QSqlQuery groupQuery(db);
+            groupQuery.prepare(QStringLiteral("SELECT sync_id FROM groups WHERE id = :id;"));
+            groupQuery.bindValue(QStringLiteral(":id"), word.groupId);
+            if (!bindAndExec(groupQuery, error)) {
+                return false;
+            }
+            query.bindValue(QStringLiteral(":group_sync_id"), groupQuery.next() ? groupQuery.value(0) : DLDatabaseManager::nullVariant());
+        } else {
+            query.bindValue(QStringLiteral(":group_sync_id"), DLDatabaseManager::nullVariant());
+        }
         query.bindValue(QStringLiteral(":notes"), word.notes.trimmed().isEmpty() ? DLDatabaseManager::nullVariant() : QVariant(word.notes.trimmed()));
         query.bindValue(QStringLiteral(":updated_at"), DLDatabaseManager::currentUnixTime());
 
@@ -408,23 +439,39 @@ bool DLWordRepository::createPhraseFromExample(QSqlDatabase& db, QString* error,
     }
 
     const qint64 now = DLDatabaseManager::currentUnixTime();
+    const QString phraseSyncId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    QString groupSyncId;
+    if (word.groupId >= 0) {
+        QSqlQuery groupQuery(db);
+        groupQuery.prepare(QStringLiteral("SELECT sync_id FROM groups WHERE id = :id;"));
+        groupQuery.bindValue(QStringLiteral(":id"), word.groupId);
+        if (!bindAndExec(groupQuery, error)) {
+            return false;
+        }
+        if (groupQuery.next()) {
+            groupSyncId = groupQuery.value(0).toString();
+        }
+    }
+
     QSqlQuery phrase(db);
     phrase.prepare(QStringLiteral(R"(
         INSERT INTO words
-            (german_word, normalized_german_word, article, part_of_speech,
+            (sync_id, german_word, normalized_german_word, article, part_of_speech,
              native_translation, normalized_native_translation,
-             example_phrase_de, example_phrase_native, group_id,
+             example_phrase_de, example_phrase_native, group_id, group_sync_id,
              notes, created_at, updated_at, deleted_at)
         VALUES
-            (:german_word, :normalized_german_word, NULL, 'Phrase',
+            (:sync_id, :german_word, :normalized_german_word, NULL, 'Phrase',
              :native_translation, :normalized_native_translation,
-             NULL, NULL, :group_id, NULL, :created_at, :updated_at, NULL);
+             NULL, NULL, :group_id, :group_sync_id, NULL, :created_at, :updated_at, NULL);
     )"));
+    phrase.bindValue(QStringLiteral(":sync_id"), phraseSyncId);
     phrase.bindValue(QStringLiteral(":german_word"), phraseGerman);
     phrase.bindValue(QStringLiteral(":normalized_german_word"), DLDatabaseManager::normalizedText(phraseGerman));
     phrase.bindValue(QStringLiteral(":native_translation"), phraseNative);
     phrase.bindValue(QStringLiteral(":normalized_native_translation"), DLDatabaseManager::normalizedText(phraseNative));
     phrase.bindValue(QStringLiteral(":group_id"), word.groupId >= 0 ? QVariant(word.groupId) : DLDatabaseManager::nullVariant());
+    phrase.bindValue(QStringLiteral(":group_sync_id"), groupSyncId.isEmpty() ? DLDatabaseManager::nullVariant() : QVariant(groupSyncId));
     phrase.bindValue(QStringLiteral(":created_at"), now);
     phrase.bindValue(QStringLiteral(":updated_at"), now);
 
@@ -435,11 +482,12 @@ bool DLWordRepository::createPhraseFromExample(QSqlDatabase& db, QString* error,
     QSqlQuery stats(db);
     stats.prepare(QStringLiteral(R"(
         INSERT INTO word_review_stats
-            (word_id, correct_answers, wrong_answers, last_reviewed_at,
+            (word_id, word_sync_id, correct_answers, wrong_answers, last_reviewed_at,
              ease_factor, interval_days, due_at, updated_at)
-        VALUES (:word_id, 0, 0, NULL, 2.5, 0, NULL, :updated_at);
+        VALUES (:word_id, :word_sync_id, 0, 0, NULL, 2.5, 0, NULL, :updated_at);
     )"));
     stats.bindValue(QStringLiteral(":word_id"), phrase.lastInsertId().toInt());
+    stats.bindValue(QStringLiteral(":word_sync_id"), phraseSyncId);
     stats.bindValue(QStringLiteral(":updated_at"), now);
     return bindAndExec(stats, error);
 }

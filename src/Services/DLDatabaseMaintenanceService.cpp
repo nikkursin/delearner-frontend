@@ -55,19 +55,26 @@ bool DLDatabaseMaintenanceService::importDatabaseMerge(const QString& sourceData
 
     const bool ok = m_database.transaction([&](QSqlDatabase& db, QString* error) {
         const qint64 now = DLDatabaseManager::currentUnixTime();
+        const QString uuidExpression = QStringLiteral(
+            "lower(hex(randomblob(4))) || '-' || "
+            "lower(hex(randomblob(2))) || '-' || "
+            "'4' || substr(lower(hex(randomblob(2))), 2) || '-' || "
+            "substr('89ab', abs(random()) % 4 + 1, 1) || substr(lower(hex(randomblob(2))), 2) || '-' || "
+            "lower(hex(randomblob(6)))");
         const QStringList commands = {
             QStringLiteral(R"(
-                INSERT OR IGNORE INTO groups (name, color_hex, created_at, updated_at)
-                SELECT name, COALESCE(color_hex, '#3366CC'), created_at, COALESCE(updated_at, created_at)
+                INSERT OR IGNORE INTO groups (sync_id, name, color_hex, created_at, updated_at)
+                SELECT %1, name, COALESCE(color_hex, '#3366CC'), created_at, COALESCE(updated_at, created_at)
                 FROM importdb.groups;
-            )"),
+            )").arg(uuidExpression),
             QStringLiteral(R"(
                 INSERT OR IGNORE INTO words
-                    (german_word, normalized_german_word, article, part_of_speech,
+                    (sync_id, german_word, normalized_german_word, article, part_of_speech,
                      native_translation, normalized_native_translation,
-                     example_phrase_de, example_phrase_native, group_id,
+                     example_phrase_de, example_phrase_native, group_id, group_sync_id,
                      notes, created_at, updated_at, deleted_at)
-                SELECT iw.german_word,
+                SELECT %1,
+                       iw.german_word,
                        COALESCE(NULLIF(iw.normalized_german_word, ''), LOWER(TRIM(iw.german_word))),
                        iw.article,
                        COALESCE(NULLIF(iw.part_of_speech, ''), 'Andere'),
@@ -82,17 +89,25 @@ bool DLDatabaseMaintenanceService::importDatabaseMerge(const QString& sourceData
                            WHERE ig.id = iw.group_id
                            LIMIT 1
                        ),
+                       (
+                           SELECT g.sync_id
+                           FROM groups g
+                           JOIN importdb.groups ig ON ig.name = g.name
+                           WHERE ig.id = iw.group_id
+                           LIMIT 1
+                       ),
                        iw.notes,
                        iw.created_at,
                        COALESCE(iw.updated_at, iw.created_at),
                        iw.deleted_at
                 FROM importdb.words iw;
-            )"),
+            )").arg(uuidExpression),
             QStringLiteral(R"(
                 INSERT OR IGNORE INTO word_review_stats
-                    (word_id, correct_answers, wrong_answers, last_reviewed_at,
+                    (word_id, word_sync_id, correct_answers, wrong_answers, last_reviewed_at,
                      ease_factor, interval_days, due_at, updated_at)
                 SELECT tw.id,
+                       tw.sync_id,
                        COALESCE(irs.correct_answers, 0),
                        COALESCE(irs.wrong_answers, 0),
                        irs.last_reviewed_at,

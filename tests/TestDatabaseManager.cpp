@@ -19,6 +19,9 @@ private slots:
     void openDatabaseOpensTemporarySqliteDatabase();
     void createTablesIfNeededCreatesRequiredTables();
     void createIndexesIfNeededCreatesExpectedIndexes();
+    void openDatabaseRecordsSqliteSchemaVersion();
+    void cleanDatabaseCreatesUuidIdentityColumns();
+    void insertsPopulateUuidIdentities();
     void closeDatabaseClosesSafely();
     void lastErrorIsSetWhenOperationFails();
     void selectRowsReturnsEmptyListForEmptyValidResult();
@@ -32,6 +35,7 @@ private:
     QString m_dbPath;
 
     bool tableExists(const QString& tableName);
+    bool columnExists(const QString& tableName, const QString& columnName);
     bool indexExists(const QString& indexName);
 };
 
@@ -58,6 +62,16 @@ bool TestDatabaseManager::tableExists(const QString& tableName)
                {{ QStringLiteral(":name"), tableName }}) == 1;
 }
 
+bool TestDatabaseManager::columnExists(const QString& tableName, const QString& columnName)
+{
+    return DLDatabaseManager::instance().selectInt(
+               QStringLiteral("SELECT COUNT(*) FROM pragma_table_info(:table_name) WHERE name = :column_name;"),
+               {
+                   { QStringLiteral(":table_name"), tableName },
+                   { QStringLiteral(":column_name"), columnName }
+               }) == 1;
+}
+
 bool TestDatabaseManager::indexExists(const QString& indexName)
 {
     return DLDatabaseManager::instance().selectInt(
@@ -77,6 +91,7 @@ void TestDatabaseManager::createTablesIfNeededCreatesRequiredTables()
              qPrintable(DLDatabaseManager::instance().lastError()));
 
     const QStringList tables = {
+        QStringLiteral("schema_version"),
         QStringLiteral("groups"),
         QStringLiteral("words"),
         QStringLiteral("word_review_stats"),
@@ -96,16 +111,70 @@ void TestDatabaseManager::createIndexesIfNeededCreatesExpectedIndexes()
              qPrintable(DLDatabaseManager::instance().lastError()));
 
     const QStringList indexes = {
+        QStringLiteral("idx_groups_sync_id"),
+        QStringLiteral("idx_words_sync_id"),
         QStringLiteral("idx_words_group_id"),
+        QStringLiteral("idx_words_group_sync_id"),
         QStringLiteral("idx_words_normalized_german"),
         QStringLiteral("idx_words_part_of_speech"),
         QStringLiteral("idx_words_unique_active_translation"),
+        QStringLiteral("idx_word_review_stats_word_sync_id"),
         QStringLiteral("idx_word_review_stats_due_at")
     };
 
     for (const QString& indexName : indexes) {
         QVERIFY2(indexExists(indexName), qPrintable(QStringLiteral("Missing index: %1").arg(indexName)));
     }
+}
+
+void TestDatabaseManager::openDatabaseRecordsSqliteSchemaVersion()
+{
+    const QVariantMap row = DLDatabaseManager::instance().selectOneRow(
+        QStringLiteral("SELECT major, minor FROM schema_version WHERE component = 'sqlite';"));
+    QCOMPARE(row.value(QStringLiteral("major")).toInt(), 1);
+    QCOMPARE(row.value(QStringLiteral("minor")).toInt(), 0);
+    QCOMPARE(DLDatabaseManager::instance().selectInt(QStringLiteral("PRAGMA user_version;")), 1000);
+}
+
+void TestDatabaseManager::cleanDatabaseCreatesUuidIdentityColumns()
+{
+    QVERIFY(columnExists(QStringLiteral("groups"), QStringLiteral("sync_id")));
+    QVERIFY(columnExists(QStringLiteral("words"), QStringLiteral("sync_id")));
+    QVERIFY(columnExists(QStringLiteral("words"), QStringLiteral("group_sync_id")));
+    QVERIFY(columnExists(QStringLiteral("word_review_stats"), QStringLiteral("word_sync_id")));
+}
+
+void TestDatabaseManager::insertsPopulateUuidIdentities()
+{
+    const int groupId = DLDatabaseManager::instance().insertGroup(QStringLiteral("Basics"), QStringLiteral("#112233"));
+    QVERIFY(groupId > 0);
+
+    const int wordId = DLDatabaseManager::instance().insertWord(
+        QStringLiteral("Haus"),
+        QStringLiteral("das"),
+        QStringLiteral("Nomen"),
+        QStringLiteral("house"),
+        QString(),
+        QString(),
+        groupId);
+    QVERIFY(wordId > 0);
+
+    const QVariantMap group = DLDatabaseManager::instance().selectOneRow(
+        QStringLiteral("SELECT sync_id FROM groups WHERE id = :id;"),
+        {{ QStringLiteral(":id"), groupId }});
+    const QVariantMap word = DLDatabaseManager::instance().selectOneRow(
+        QStringLiteral("SELECT sync_id, group_sync_id FROM words WHERE id = :id;"),
+        {{ QStringLiteral(":id"), wordId }});
+    const QVariantMap stats = DLDatabaseManager::instance().selectOneRow(
+        QStringLiteral("SELECT word_sync_id FROM word_review_stats WHERE word_id = :word_id;"),
+        {{ QStringLiteral(":word_id"), wordId }});
+
+    const QString groupSyncId = group.value(QStringLiteral("sync_id")).toString();
+    const QString wordSyncId = word.value(QStringLiteral("sync_id")).toString();
+    QVERIFY(!QUuid(groupSyncId).isNull());
+    QVERIFY(!QUuid(wordSyncId).isNull());
+    QCOMPARE(word.value(QStringLiteral("group_sync_id")).toString(), groupSyncId);
+    QCOMPARE(stats.value(QStringLiteral("word_sync_id")).toString(), wordSyncId);
 }
 
 void TestDatabaseManager::closeDatabaseClosesSafely()
@@ -136,8 +205,9 @@ void TestDatabaseManager::selectRowsReturnsEmptyListForEmptyValidResult()
 void TestDatabaseManager::namedBindingsAcceptColonlessKeys()
 {
     QVERIFY2(DLDatabaseManager::instance().executeSql(
-                 QStringLiteral("INSERT INTO groups (name, color_hex, created_at, updated_at) VALUES (:name, :color_hex, :created_at, :updated_at);"),
+                 QStringLiteral("INSERT INTO groups (sync_id, name, color_hex, created_at, updated_at) VALUES (:sync_id, :name, :color_hex, :created_at, :updated_at);"),
                  {
+                     { QStringLiteral("sync_id"), QUuid::createUuid().toString(QUuid::WithoutBraces) },
                      { QStringLiteral("name"), QStringLiteral("Basics") },
                      { QStringLiteral("color_hex"), QStringLiteral("#112233") },
                      { QStringLiteral("created_at"), 10 },
