@@ -20,3 +20,18 @@ foreach(test_name IN LISTS DELEARNER_TESTS)
 
     add_test(NAME ${test_name} COMMAND ${test_name})
 endforeach()
+
+find_program(PYTHON3_EXECUTABLE python3)
+get_filename_component(DELEARNER_ROOT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
+set(DELEARNER_CONTRACT_VALIDATOR "${DELEARNER_ROOT_DIR}/contracts/validate_contract_fixtures.py")
+set(DELEARNER_CONTRACT_FIXTURE_DIR "${DELEARNER_ROOT_DIR}/contracts/fixtures/v1")
+
+if(PYTHON3_EXECUTABLE AND EXISTS "${DELEARNER_CONTRACT_VALIDATOR}" AND IS_DIRECTORY "${DELEARNER_CONTRACT_FIXTURE_DIR}")
+    add_test(
+        NAME TestContractFixtures
+        COMMAND "${PYTHON3_EXECUTABLE}" "${DELEARNER_CONTRACT_VALIDATOR}"
+                --fixture-dir "${DELEARNER_CONTRACT_FIXTURE_DIR}"
+    )
+else()
+    message(WARNING "Root contract fixture validator is unavailable; TestContractFixtures was not registered.")
+endif()

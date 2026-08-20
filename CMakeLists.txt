@@ -9,7 +9,7 @@ if(IOS)
     enable_language(OBJCXX)
 endif()
 
-find_package(Felgo REQUIRED)
+find_package(Felgo QUIET)
 
 
 # Project identifier and version
@@ -41,6 +41,12 @@ list(APPEND AssetsFiles assets/icons/sort_words_icon.svg)
 list(REMOVE_DUPLICATES AssetsFiles)
 
 find_package(Qt6 REQUIRED COMPONENTS Core Sql Test)
+
+option(DELEARNER_BUILD_APP "Build the Felgo application target." ON)
+if(DELEARNER_BUILD_APP AND NOT Felgo_FOUND)
+    message(WARNING "Felgo was not found; disabling the application target and building tests/core only.")
+    set(DELEARNER_BUILD_APP OFF)
+endif()
 
 set(DELEARNER_CORE_SOURCES
     src/Logging/DLLogging.cpp
@@ -90,35 +96,36 @@ target_include_directories(delearner_core
 )
 target_link_libraries(delearner_core PUBLIC Qt6::Core Qt6::Sql)
 
-qt_add_executable(delearner
-    main.cpp
-    src/Managers/DLAppStateManager.cpp
-    src/Managers/DLAppStateManager.h
-    src/Services/DLDatabaseExportService.cpp
-    src/Services/DLDatabaseExportService.h
-    ${QmlFiles}
-    ${AssetsFiles}
-)
+if(DELEARNER_BUILD_APP)
+    qt_add_executable(delearner
+        main.cpp
+        src/Managers/DLAppStateManager.cpp
+        src/Managers/DLAppStateManager.h
+        src/Services/DLDatabaseExportService.cpp
+        src/Services/DLDatabaseExportService.h
+        ${QmlFiles}
+        ${AssetsFiles}
+    )
 
-if(IOS)
-    target_sources(delearner PRIVATE src/Services/DLDatabaseExportService_ios.mm)
-endif()
+    if(IOS)
+        target_sources(delearner PRIVATE src/Services/DLDatabaseExportService_ios.mm)
+    endif()
 
-felgo_configure_executable(delearner)
+    felgo_configure_executable(delearner)
 
 # Deploy resources to build folder/package directly
 # comment for publishing
-deploy_resources("${QmlFiles};${AssetsFiles}")
+    deploy_resources("${QmlFiles};${AssetsFiles}")
 
 # Add QML files and resources to QML module to included them via QRC automatically:
-qt_add_qml_module(delearner
-    URI delearner
-    VERSION 1.0
+    qt_add_qml_module(delearner
+        URI delearner
+        VERSION 1.0
 # uncomment for publishing:
-    QML_FILES ${QmlFiles}
-    RESOURCES ${AssetsFiles}
-    NO_RESOURCE_TARGET_PATH
-)
+        QML_FILES ${QmlFiles}
+        RESOURCES ${AssetsFiles}
+        NO_RESOURCE_TARGET_PATH
+    )
 
 # NOTE: for PUBLISHING, perform the following steps:
 # 1. comment the deploy_resources line above, to avoid shipping your qml files with the application (instead they get compiled to the app binary)
@@ -129,26 +136,27 @@ qt_add_qml_module(delearner
 # during development, use the deploy_resources because you then get shorter compilation times (the qml files do not need to be compiled to the binary but are just copied)
 # also, for quickest deployment on Desktop disable the "Shadow Build" option in Projects/Builds - you can then select "Run Without Deployment" from the Build menu in Qt Creator if you only changed QML files; this speeds up application start, because your app is not copied & re-compiled but just re-interpreted
 
-target_compile_definitions(delearner
-    PRIVATE $<$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>:QT_QML_DEBUG>)
+    target_compile_definitions(delearner
+        PRIVATE $<$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>:QT_QML_DEBUG>)
 
-target_link_libraries(delearner PRIVATE Felgo)
-target_link_libraries(delearner PRIVATE Qt6::Core)
-target_link_libraries(delearner PRIVATE Qt6::Sql)
-target_link_libraries(delearner PRIVATE delearner_core)
+    target_link_libraries(delearner PRIVATE Felgo)
+    target_link_libraries(delearner PRIVATE Qt6::Core)
+    target_link_libraries(delearner PRIVATE Qt6::Sql)
+    target_link_libraries(delearner PRIVATE delearner_core)
 
-if(IOS)
-    target_link_libraries(delearner PRIVATE "-framework UIKit")
-    set_target_properties(delearner PROPERTIES
-        MACOSX_BUNDLE TRUE
-        MACOSX_BUNDLE_GUI_IDENTIFIER ${PRODUCT_IDENTIFIER}
-        MACOSX_BUNDLE_BUNDLE_NAME "DE Learner"
-        MACOSX_BUNDLE_EXECUTABLE_NAME delearner
-    )
+    if(IOS)
+        target_link_libraries(delearner PRIVATE "-framework UIKit")
+        set_target_properties(delearner PROPERTIES
+            MACOSX_BUNDLE TRUE
+            MACOSX_BUNDLE_GUI_IDENTIFIER ${PRODUCT_IDENTIFIER}
+            MACOSX_BUNDLE_BUNDLE_NAME "DE Learner"
+            MACOSX_BUNDLE_EXECUTABLE_NAME delearner
+        )
+    endif()
 endif()
 
-# enable_testing()
-# add_subdirectory(tests)
+enable_testing()
+add_subdirectory(tests)
 
 # uncomment this line to add Felgo Hot Reload and use hot reloading with your custom C++ code
 # for the remaining steps see here: https://felgo.com/custom-code-reload-app/
