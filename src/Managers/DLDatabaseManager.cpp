@@ -19,7 +19,7 @@
 
 namespace {
 constexpr int kSqliteSchemaMajor = 1;
-constexpr int kSqliteSchemaMinor = 0;
+constexpr int kSqliteSchemaMinor = 1;
 constexpr int kSqliteUserVersion = kSqliteSchemaMajor * 1000 + kSqliteSchemaMinor;
 
 QStringList argumentKeys(const QVariantMap& args)
@@ -407,6 +407,39 @@ bool DLDatabaseManager::createTablesIfNeeded()
                 superlative_form TEXT,
                 FOREIGN KEY(word_id) REFERENCES words(id) ON DELETE CASCADE
             );
+        )"), {} },
+        { QStringLiteral(R"(
+            CREATE TABLE IF NOT EXISTS sync_outbox_events (
+                event_id TEXT PRIMARY KEY,
+                contract_version TEXT NOT NULL,
+                device_id TEXT,
+                entity_type TEXT NOT NULL,
+                entity_id TEXT NOT NULL,
+                operation TEXT NOT NULL CHECK(operation IN ('create', 'update', 'delete')),
+                updated_at INTEGER NOT NULL,
+                envelope_json TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                send_attempt_count INTEGER NOT NULL DEFAULT 0 CHECK(send_attempt_count >= 0),
+                last_attempted_at INTEGER,
+                next_attempt_after INTEGER,
+                last_error TEXT
+            );
+        )"), {} },
+        { QStringLiteral(R"(
+            CREATE TABLE IF NOT EXISTS sync_acknowledged_event_diagnostics (
+                event_id TEXT PRIMARY KEY,
+                contract_version TEXT NOT NULL,
+                entity_type TEXT NOT NULL,
+                entity_id TEXT NOT NULL,
+                operation TEXT NOT NULL CHECK(operation IN ('create', 'update', 'delete')),
+                updated_at INTEGER NOT NULL,
+                created_at INTEGER NOT NULL,
+                acknowledged_at INTEGER NOT NULL,
+                server_sequence INTEGER,
+                canonical_result_json TEXT,
+                diagnostic_json TEXT
+            );
         )"), {} }
     };
 
@@ -427,6 +460,42 @@ bool DLDatabaseManager::migrateSchemaIfNeeded()
                 updated_at INTEGER NOT NULL
             );
         )"), error)) {
+            return false;
+        }
+
+        if (!execMigrationSql(db, QStringLiteral(R"(
+            CREATE TABLE IF NOT EXISTS sync_outbox_events (
+                event_id TEXT PRIMARY KEY,
+                contract_version TEXT NOT NULL,
+                device_id TEXT,
+                entity_type TEXT NOT NULL,
+                entity_id TEXT NOT NULL,
+                operation TEXT NOT NULL CHECK(operation IN ('create', 'update', 'delete')),
+                updated_at INTEGER NOT NULL,
+                envelope_json TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                send_attempt_count INTEGER NOT NULL DEFAULT 0 CHECK(send_attempt_count >= 0),
+                last_attempted_at INTEGER,
+                next_attempt_after INTEGER,
+                last_error TEXT
+            );
+        )"), error)
+            || !execMigrationSql(db, QStringLiteral(R"(
+                CREATE TABLE IF NOT EXISTS sync_acknowledged_event_diagnostics (
+                    event_id TEXT PRIMARY KEY,
+                    contract_version TEXT NOT NULL,
+                    entity_type TEXT NOT NULL,
+                    entity_id TEXT NOT NULL,
+                    operation TEXT NOT NULL CHECK(operation IN ('create', 'update', 'delete')),
+                    updated_at INTEGER NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    acknowledged_at INTEGER NOT NULL,
+                    server_sequence INTEGER,
+                    canonical_result_json TEXT,
+                    diagnostic_json TEXT
+                );
+            )"), error)) {
             return false;
         }
 
@@ -607,7 +676,12 @@ bool DLDatabaseManager::createIndexesIfNeeded()
             WHERE deleted_at IS NULL;
         )"), {} },
         { QStringLiteral("CREATE UNIQUE INDEX IF NOT EXISTS idx_word_review_stats_word_sync_id ON word_review_stats(word_sync_id);"), {} },
-        { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_word_review_stats_due_at ON word_review_stats(due_at);"), {} }
+        { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_word_review_stats_due_at ON word_review_stats(due_at);"), {} },
+        { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_sync_outbox_events_created_at ON sync_outbox_events(created_at);"), {} },
+        { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_sync_outbox_events_next_attempt_after ON sync_outbox_events(next_attempt_after);"), {} },
+        { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_sync_outbox_events_entity ON sync_outbox_events(entity_type, entity_id);"), {} },
+        { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_sync_acknowledged_event_diagnostics_acknowledged_at ON sync_acknowledged_event_diagnostics(acknowledged_at);"), {} },
+        { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_sync_acknowledged_event_diagnostics_entity ON sync_acknowledged_event_diagnostics(entity_type, entity_id);"), {} }
     };
 
     return executeSqlBatch(commands);
