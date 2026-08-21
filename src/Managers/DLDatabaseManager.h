@@ -112,8 +112,8 @@ public:
                                     const QString& partOfSpeech = QString());
     int getGroupCount();
     int getNounCount(const QString& groupSyncId = QString());
-    bool incrementCorrectAnswer(int wordId);
-    bool incrementWrongAnswer(int wordId);
+    bool incrementCorrectAnswer(const QString& wordSyncId);
+    bool incrementWrongAnswer(const QString& wordSyncId);
     QVariantMap getDatabaseStats();
     bool importDatabaseMerge(const QString& sourceDatabasePath);
     bool deleteAllData();

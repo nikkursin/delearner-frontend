@@ -100,8 +100,8 @@ QVariantMap DLQuizSession::submitAnswer(const QString& answer)
 
     DLReviewStatsRepository reviewStats(m_database);
     const bool statsUpdated = question.isCorrect
-        ? reviewStats.incrementCorrectAnswer(question.localWordId)
-        : reviewStats.incrementWrongAnswer(question.localWordId);
+        ? reviewStats.incrementCorrectAnswer(question.wordId)
+        : reviewStats.incrementWrongAnswer(question.wordId);
 
     if (question.isCorrect) {
         ++m_correctAnswerCount;

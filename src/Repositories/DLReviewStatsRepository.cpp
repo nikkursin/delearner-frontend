@@ -8,30 +8,40 @@ DLReviewStatsRepository::DLReviewStatsRepository(DLDatabaseManager& database)
 {
 }
 
-bool DLReviewStatsRepository::incrementCorrectAnswer(int wordId)
+bool DLReviewStatsRepository::incrementCorrectAnswer(const QString& wordSyncId)
 {
-    return incrementAnswer(wordId, QStringLiteral("correct_answers"));
+    return incrementAnswer(wordSyncId, QStringLiteral("correct_answers"));
 }
 
-bool DLReviewStatsRepository::incrementWrongAnswer(int wordId)
+bool DLReviewStatsRepository::incrementWrongAnswer(const QString& wordSyncId)
 {
-    return incrementAnswer(wordId, QStringLiteral("wrong_answers"));
+    return incrementAnswer(wordSyncId, QStringLiteral("wrong_answers"));
 }
 
-DLWordReviewStats DLReviewStatsRepository::fetchStats(int wordId)
+DLWordReviewStats DLReviewStatsRepository::fetchStats(const QString& wordSyncId)
 {
+    const QString trimmedSyncId = wordSyncId.trimmed();
     const QVariantMap row = m_database.selectOneRow(
         QStringLiteral(R"(
-            SELECT word_id, word_sync_id, correct_answers, wrong_answers, last_reviewed_at,
-                   ease_factor, interval_days, due_at, updated_at
-            FROM word_review_stats
-            WHERE word_id = :word_id;
+            SELECT w.id AS word_id,
+                   w.sync_id AS word_sync_id,
+                   COALESCE(rs.correct_answers, 0) AS correct_answers,
+                   COALESCE(rs.wrong_answers, 0) AS wrong_answers,
+                   rs.last_reviewed_at,
+                   COALESCE(rs.ease_factor, 2.5) AS ease_factor,
+                   COALESCE(rs.interval_days, 0) AS interval_days,
+                   rs.due_at,
+                   COALESCE(rs.updated_at, 0) AS updated_at
+            FROM words w
+            LEFT JOIN word_review_stats rs ON rs.word_sync_id = w.sync_id
+            WHERE w.sync_id = :word_sync_id
+              AND w.deleted_at IS NULL;
         )"),
-        {{ QStringLiteral(":word_id"), wordId }});
+        {{ QStringLiteral(":word_sync_id"), trimmedSyncId }});
 
     DLWordReviewStats stats;
-    stats.wordId = row.value(QStringLiteral("word_id"), wordId).toInt();
-    stats.wordSyncId = row.value(QStringLiteral("word_sync_id")).toString();
+    stats.wordId = row.value(QStringLiteral("word_id"), -1).toInt();
+    stats.wordSyncId = row.value(QStringLiteral("word_sync_id"), trimmedSyncId).toString();
     stats.correctAnswers = row.value(QStringLiteral("correct_answers"), 0).toInt();
     stats.wrongAnswers = row.value(QStringLiteral("wrong_answers"), 0).toInt();
     stats.lastReviewedAt = row.value(QStringLiteral("last_reviewed_at"));
@@ -44,6 +54,13 @@ DLWordReviewStats DLReviewStatsRepository::fetchStats(int wordId)
 
 bool DLReviewStatsRepository::upsertStats(const DLWordReviewStats& stats)
 {
+    const QString wordSyncId = stats.wordSyncId.trimmed();
+    const int wordId = localWordIdForSyncId(wordSyncId);
+    if (wordId < 0) {
+        qCWarning(dlRepo) << "Cannot upsert review stats for missing word sync id" << wordSyncId;
+        return false;
+    }
+
     const qint64 now = DLDatabaseManager::currentUnixTime();
     const bool success = m_database.executeSql(
         QStringLiteral(R"(
@@ -51,10 +68,11 @@ bool DLReviewStatsRepository::upsertStats(const DLWordReviewStats& stats)
                 (word_id, word_sync_id, correct_answers, wrong_answers, last_reviewed_at,
                  ease_factor, interval_days, due_at, updated_at)
             VALUES
-                (:word_id, COALESCE(NULLIF(:word_sync_id, ''), (SELECT sync_id FROM words WHERE id = :word_id)),
+                (:word_id, :word_sync_id,
                  :correct_answers, :wrong_answers, :last_reviewed_at,
                  :ease_factor, :interval_days, :due_at, :updated_at)
-            ON CONFLICT(word_id) DO UPDATE SET
+            ON CONFLICT(word_sync_id) DO UPDATE SET
+                word_id = excluded.word_id,
                 word_sync_id = excluded.word_sync_id,
                 correct_answers = excluded.correct_answers,
                 wrong_answers = excluded.wrong_answers,
@@ -65,8 +83,8 @@ bool DLReviewStatsRepository::upsertStats(const DLWordReviewStats& stats)
                 updated_at = excluded.updated_at;
         )"),
         {
-            { QStringLiteral(":word_id"), stats.wordId },
-            { QStringLiteral(":word_sync_id"), stats.wordSyncId },
+            { QStringLiteral(":word_id"), wordId },
+            { QStringLiteral(":word_sync_id"), wordSyncId },
             { QStringLiteral(":correct_answers"), stats.correctAnswers },
             { QStringLiteral(":wrong_answers"), stats.wrongAnswers },
             { QStringLiteral(":last_reviewed_at"), stats.lastReviewedAt },
@@ -74,15 +92,22 @@ bool DLReviewStatsRepository::upsertStats(const DLWordReviewStats& stats)
             { QStringLiteral(":interval_days"), stats.intervalDays },
             { QStringLiteral(":due_at"), stats.dueAt },
             { QStringLiteral(":updated_at"), stats.updatedAt > 0 ? stats.updatedAt : now }
-        });
+    });
     if (!success) {
-        qCWarning(dlRepo) << "Failed to upsert review stats for word" << stats.wordId << ":" << m_database.lastError();
+        qCWarning(dlRepo) << "Failed to upsert review stats for word" << wordSyncId << ":" << m_database.lastError();
     }
     return success;
 }
 
-bool DLReviewStatsRepository::incrementAnswer(int wordId, const QString& columnName)
+bool DLReviewStatsRepository::incrementAnswer(const QString& wordSyncId, const QString& columnName)
 {
+    const QString trimmedSyncId = wordSyncId.trimmed();
+    const int wordId = localWordIdForSyncId(trimmedSyncId);
+    if (wordId < 0) {
+        qCWarning(dlRepo) << "Cannot increment review stats for missing word sync id" << trimmedSyncId;
+        return false;
+    }
+
     const qint64 now = DLDatabaseManager::currentUnixTime();
     const bool success = m_database.executeSql(
         QStringLiteral(R"(
@@ -90,8 +115,9 @@ bool DLReviewStatsRepository::incrementAnswer(int wordId, const QString& columnN
                 (word_id, word_sync_id, correct_answers, wrong_answers, last_reviewed_at,
                  ease_factor, interval_days, due_at, updated_at)
             VALUES
-                (:word_id, (SELECT sync_id FROM words WHERE id = :word_id), %1, %2, :reviewed_at, 2.5, 0, NULL, :reviewed_at)
-            ON CONFLICT(word_id) DO UPDATE SET
+                (:word_id, :word_sync_id, %1, %2, :reviewed_at, 2.5, 0, NULL, :reviewed_at)
+            ON CONFLICT(word_sync_id) DO UPDATE SET
+                word_id = excluded.word_id,
                 word_sync_id = excluded.word_sync_id,
                 %3 = word_review_stats.%3 + 1,
                 last_reviewed_at = excluded.last_reviewed_at,
@@ -101,10 +127,23 @@ bool DLReviewStatsRepository::incrementAnswer(int wordId, const QString& columnN
                columnName),
         {
             { QStringLiteral(":word_id"), wordId },
+            { QStringLiteral(":word_sync_id"), trimmedSyncId },
             { QStringLiteral(":reviewed_at"), now }
         });
     if (!success) {
-        qCWarning(dlRepo) << "Failed to increment review stats for word" << wordId << ":" << m_database.lastError();
+        qCWarning(dlRepo) << "Failed to increment review stats for word" << trimmedSyncId << ":" << m_database.lastError();
     }
     return success;
+}
+
+int DLReviewStatsRepository::localWordIdForSyncId(const QString& wordSyncId)
+{
+    if (wordSyncId.trimmed().isEmpty()) {
+        return -1;
+    }
+
+    return m_database.selectInt(
+        QStringLiteral("SELECT id FROM words WHERE sync_id = :word_sync_id AND deleted_at IS NULL;"),
+        {{ QStringLiteral(":word_sync_id"), wordSyncId.trimmed() }},
+        -1);
 }

@@ -1000,14 +1000,14 @@ int DLDatabaseManager::getNounCount(const QString& groupSyncId)
     return DLQuizRepository(*this).getNounCount(groupSyncId);
 }
 
-bool DLDatabaseManager::incrementCorrectAnswer(int wordId)
+bool DLDatabaseManager::incrementCorrectAnswer(const QString& wordSyncId)
 {
-    return DLReviewStatsRepository(*this).incrementCorrectAnswer(wordId);
+    return DLReviewStatsRepository(*this).incrementCorrectAnswer(wordSyncId);
 }
 
-bool DLDatabaseManager::incrementWrongAnswer(int wordId)
+bool DLDatabaseManager::incrementWrongAnswer(const QString& wordSyncId)
 {
-    return DLReviewStatsRepository(*this).incrementWrongAnswer(wordId);
+    return DLReviewStatsRepository(*this).incrementWrongAnswer(wordSyncId);
 }
 
 QVariantMap DLDatabaseManager::getDatabaseStats()

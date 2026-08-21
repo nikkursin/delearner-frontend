@@ -237,13 +237,12 @@ QList<DLQuizQuestion> DLQuizService::buildQuestions(QuizType type,
 DLQuizQuestion DLQuizService::buildQuestion(QuizType type, const DLWord& word, const QList<DLWord>& pool) const
 {
     const QString germanWord = word.germanWord.trimmed();
-    if (word.id <= 0 || word.syncId.trimmed().isEmpty() || germanWord.isEmpty()) {
+    if (word.syncId.trimmed().isEmpty() || germanWord.isEmpty()) {
         return {};
     }
 
     DLQuizQuestion question;
     question.wordId = word.syncId;
-    question.localWordId = word.id;
     question.quizType = quizTypeToString(type);
     question.prompt = germanWord;
     question.germanWord = germanWord;
