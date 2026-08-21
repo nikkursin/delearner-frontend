@@ -4,6 +4,7 @@ set(DELEARNER_TESTS
     TestWordRepository
     TestReviewStatsRepository
     TestQuizRepository
+    TestSyncEventSerializer
 )
 
 foreach(test_name IN LISTS DELEARNER_TESTS)
@@ -23,6 +24,12 @@ endforeach()
 
 find_program(PYTHON3_EXECUTABLE python3)
 get_filename_component(DELEARNER_ROOT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
+if(TARGET TestSyncEventSerializer)
+    target_compile_definitions(TestSyncEventSerializer
+        PRIVATE
+            DELEARNER_ROOT_DIR="${DELEARNER_ROOT_DIR}"
+    )
+endif()
 set(DELEARNER_CONTRACT_VALIDATOR "${DELEARNER_ROOT_DIR}/contracts/validate_contract_fixtures.py")
 set(DELEARNER_CONTRACT_FIXTURE_DIR "${DELEARNER_ROOT_DIR}/contracts/fixtures/v1")
 

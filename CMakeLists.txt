@@ -71,6 +71,8 @@ set(DELEARNER_CORE_SOURCES
     src/Services/DLQuizSession.h
     src/Services/DLWordService.cpp
     src/Services/DLWordService.h
+    src/Sync/DLSyncEventSerializer.cpp
+    src/Sync/DLSyncEventSerializer.h
     src/Models/DLModelMappers.cpp
     src/Models/DLModelMappers.h
     src/Models/DLQuizQuestion.h
@@ -93,6 +95,7 @@ target_include_directories(delearner_core
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Models
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Repositories
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Services
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Sync
 )
 target_link_libraries(delearner_core PUBLIC Qt6::Core Qt6::Sql)
 
