@@ -2,6 +2,7 @@
 #define DLWORDGROUP_H
 
 #include <QString>
+#include <QVariant>
 #include <QtGlobal>
 
 struct DLWordGroup
@@ -12,6 +13,7 @@ struct DLWordGroup
     QString colorHex = QStringLiteral("#3366CC");
     qint64 createdAt = 0;
     qint64 updatedAt = 0;
+    QVariant deletedAt;
     int wordCount = 0;
 };
 

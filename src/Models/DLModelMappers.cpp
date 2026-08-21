@@ -122,6 +122,7 @@ DLWordGroup DLModelMappers::groupFromMap(const QVariantMap& map)
     group.colorHex = map.value(QStringLiteral("color_hex"), QStringLiteral("#3366CC")).toString();
     group.createdAt = map.value(QStringLiteral("created_at")).toLongLong();
     group.updatedAt = map.value(QStringLiteral("updated_at")).toLongLong();
+    group.deletedAt = map.value(QStringLiteral("deleted_at"));
     group.wordCount = map.value(QStringLiteral("word_count"), 0).toInt();
     return group;
 }
@@ -137,6 +138,7 @@ QVariantMap DLModelMappers::groupToMap(const DLWordGroup& group)
     map.insert(QStringLiteral("color_hex"), group.colorHex);
     map.insert(QStringLiteral("created_at"), group.createdAt);
     map.insert(QStringLiteral("updated_at"), group.updatedAt);
+    map.insert(QStringLiteral("deleted_at"), group.deletedAt);
     map.insert(QStringLiteral("word_count"), group.wordCount);
     return map;
 }

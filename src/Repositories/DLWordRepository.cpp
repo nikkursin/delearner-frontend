@@ -226,9 +226,20 @@ bool DLWordRepository::updateWord(const DLWord& word)
 
 bool DLWordRepository::deleteWord(const QString& syncId)
 {
+    const qint64 now = DLDatabaseManager::currentUnixTime();
     const bool success = m_database.executeSql(
-        QStringLiteral("DELETE FROM words WHERE sync_id = :sync_id;"),
-        {{ QStringLiteral(":sync_id"), syncId }});
+        QStringLiteral(R"(
+            UPDATE words
+            SET deleted_at = :deleted_at,
+                updated_at = :updated_at
+            WHERE sync_id = :sync_id
+              AND deleted_at IS NULL;
+        )"),
+        {
+            { QStringLiteral(":sync_id"), syncId },
+            { QStringLiteral(":deleted_at"), now },
+            { QStringLiteral(":updated_at"), now }
+        });
     if (!success) {
         qCWarning(dlRepo) << "Failed to delete word" << syncId << ":" << m_database.lastError();
     }
@@ -370,7 +381,7 @@ int DLWordRepository::localWordIdForSyncId(QSqlDatabase& db, QString* error, con
 int DLWordRepository::localGroupIdForSyncId(QSqlDatabase& db, QString* error, const QString& syncId)
 {
     QSqlQuery query(db);
-    query.prepare(QStringLiteral("SELECT id FROM groups WHERE sync_id = :sync_id;"));
+    query.prepare(QStringLiteral("SELECT id FROM groups WHERE sync_id = :sync_id AND deleted_at IS NULL;"));
     query.bindValue(QStringLiteral(":sync_id"), syncId.trimmed());
     if (!bindAndExec(query, error)) {
         return -1;

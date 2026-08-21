@@ -21,7 +21,7 @@ private slots:
     void insertWordReturnsValidId();
     void fetchWordByIdReturnsCorrectData();
     void updateWordChangesCoreFields();
-    void deleteWordRemovesWord();
+    void deleteWordTombstonesWord();
     void duplicateDetectionUsesNormalizedWords();
     void duplicateDetectionAllowsDifferentTranslations();
     void wordExistsDoesNotReportDuplicateOnQueryFailure();
@@ -119,7 +119,7 @@ void TestWordRepository::updateWordChangesCoreFields()
     QCOMPARE(fetched.nounForms.pluralForm, update.nounForms.pluralForm);
 }
 
-void TestWordRepository::deleteWordRemovesWord()
+void TestWordRepository::deleteWordTombstonesWord()
 {
     DLWordRepository repository(DLDatabaseManager::instance());
     const QString wordId = repository.insertWord(word(QStringLiteral("Haus"), QStringLiteral("house")));
@@ -127,6 +127,10 @@ void TestWordRepository::deleteWordRemovesWord()
     QVERIFY2(repository.deleteWord(wordId), qPrintable(DLDatabaseManager::instance().lastError()));
     QCOMPARE(repository.fetchWordById(wordId).id, -1);
     QCOMPARE(repository.getWordCount(), 0);
+    QCOMPARE(DLDatabaseManager::instance().selectInt(
+                 QStringLiteral("SELECT COUNT(*) FROM words WHERE sync_id = :sync_id AND deleted_at IS NOT NULL;"),
+                 {{ QStringLiteral(":sync_id"), wordId }}),
+             1);
 }
 
 void TestWordRepository::duplicateDetectionUsesNormalizedWords()

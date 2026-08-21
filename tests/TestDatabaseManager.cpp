@@ -112,6 +112,7 @@ void TestDatabaseManager::createIndexesIfNeededCreatesExpectedIndexes()
 
     const QStringList indexes = {
         QStringLiteral("idx_groups_sync_id"),
+        QStringLiteral("idx_groups_deleted_at"),
         QStringLiteral("idx_words_sync_id"),
         QStringLiteral("idx_words_group_id"),
         QStringLiteral("idx_words_group_sync_id"),
@@ -139,6 +140,7 @@ void TestDatabaseManager::openDatabaseRecordsSqliteSchemaVersion()
 void TestDatabaseManager::cleanDatabaseCreatesUuidIdentityColumns()
 {
     QVERIFY(columnExists(QStringLiteral("groups"), QStringLiteral("sync_id")));
+    QVERIFY(columnExists(QStringLiteral("groups"), QStringLiteral("deleted_at")));
     QVERIFY(columnExists(QStringLiteral("words"), QStringLiteral("sync_id")));
     QVERIFY(columnExists(QStringLiteral("words"), QStringLiteral("group_sync_id")));
     QVERIFY(columnExists(QStringLiteral("word_review_stats"), QStringLiteral("word_sync_id")));

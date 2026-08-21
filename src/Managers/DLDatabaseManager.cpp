@@ -343,7 +343,8 @@ bool DLDatabaseManager::createTablesIfNeeded()
                 name TEXT NOT NULL,
                 color_hex TEXT DEFAULT '#3366CC',
                 created_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL
+                updated_at INTEGER NOT NULL,
+                deleted_at INTEGER
             );
         )"), {} },
         { QStringLiteral(R"(
@@ -441,6 +442,18 @@ bool DLDatabaseManager::migrateSchemaIfNeeded()
                                      QStringLiteral("UPDATE groups SET updated_at = COALESCE(created_at, :now) WHERE updated_at IS NULL;"),
                                      error,
                                      {{ QStringLiteral(":now"), now }})) {
+                return false;
+            }
+        }
+
+        const bool groupsHasDeletedAt = tableHasColumn(db, QStringLiteral("groups"), QStringLiteral("deleted_at"), error);
+        if (!error->isEmpty()) {
+            return false;
+        }
+
+        if (!groupsHasDeletedAt) {
+            qCInfo(dlDb) << "Adding missing groups.deleted_at column";
+            if (!execMigrationSql(db, QStringLiteral("ALTER TABLE groups ADD COLUMN deleted_at INTEGER;"), error)) {
                 return false;
             }
         }
@@ -582,6 +595,7 @@ bool DLDatabaseManager::createIndexesIfNeeded()
     qCDebug(dlDb) << "Creating database indexes if needed";
     const QList<DLSqlCommand> commands = {
         { QStringLiteral("CREATE UNIQUE INDEX IF NOT EXISTS idx_groups_sync_id ON groups(sync_id);"), {} },
+        { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_groups_deleted_at ON groups(deleted_at);"), {} },
         { QStringLiteral("CREATE UNIQUE INDEX IF NOT EXISTS idx_words_sync_id ON words(sync_id);"), {} },
         { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_words_group_id ON words(group_id);"), {} },
         { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_words_group_sync_id ON words(group_sync_id);"), {} },

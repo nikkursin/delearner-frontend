@@ -20,7 +20,7 @@ private slots:
     void fetchAllGroupsReturnsInsertedGroups();
     void fetchGroupByIdReturnsCorrectGroup();
     void updateGroupChangesNameAndColor();
-    void deleteGroupRemovesGroup();
+    void deleteGroupTombstonesGroup();
     void wordCountPerGroupWorks();
 
 private:
@@ -105,7 +105,7 @@ void TestGroupRepository::updateGroupChangesNameAndColor()
     QCOMPARE(fetched.colorHex, update.colorHex);
 }
 
-void TestGroupRepository::deleteGroupRemovesGroup()
+void TestGroupRepository::deleteGroupTombstonesGroup()
 {
     DLGroupRepository repository(DLDatabaseManager::instance());
     DLWordGroup group;
@@ -115,6 +115,10 @@ void TestGroupRepository::deleteGroupRemovesGroup()
     QVERIFY2(repository.deleteGroup(groupId), qPrintable(DLDatabaseManager::instance().lastError()));
     QVERIFY(repository.fetchGroupById(groupId).syncId.isEmpty());
     QCOMPARE(repository.getGroupCount(), 0);
+    QCOMPARE(DLDatabaseManager::instance().selectInt(
+                 QStringLiteral("SELECT COUNT(*) FROM groups WHERE sync_id = :sync_id AND deleted_at IS NOT NULL;"),
+                 {{ QStringLiteral(":sync_id"), groupId }}),
+             1);
 }
 
 void TestGroupRepository::wordCountPerGroupWorks()

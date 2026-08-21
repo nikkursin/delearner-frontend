@@ -23,7 +23,7 @@ private slots:
     void incrementWrongAnswerIncrementsWrongCount();
     void lastReviewedAtIsUpdatedAfterAnswerIncrement();
     void upsertRejectsMissingWordUuid();
-    void deletingWordDeletesReviewStats();
+    void deletingWordKeepsReviewStatsForSync();
 
 private:
     QString m_dbPath;
@@ -121,7 +121,7 @@ void TestReviewStatsRepository::upsertRejectsMissingWordUuid()
     QVERIFY(!repository.upsertStats(stats));
 }
 
-void TestReviewStatsRepository::deletingWordDeletesReviewStats()
+void TestReviewStatsRepository::deletingWordKeepsReviewStatsForSync()
 {
     const QString wordId = insertWord();
     DLReviewStatsRepository stats(DLDatabaseManager::instance());
@@ -132,7 +132,7 @@ void TestReviewStatsRepository::deletingWordDeletesReviewStats()
     QCOMPARE(DLDatabaseManager::instance().selectInt(
                  QStringLiteral("SELECT COUNT(*) FROM word_review_stats WHERE word_sync_id = :word_id;"),
                  {{ QStringLiteral(":word_id"), wordId }}),
-             0);
+             1);
 }
 
 QTEST_MAIN(TestReviewStatsRepository)
