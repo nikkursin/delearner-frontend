@@ -15,7 +15,7 @@ DLAppPage {
     property var word: ({})
     property var groupOptions: []
     property string errorMessage: ""
-    property int pendingDeleteWordId: -1
+    property string pendingDeleteWordId: ""
     property string pendingDeleteWord: ""
 
     readonly property color fieldBg: "#f1f4f9"
@@ -25,7 +25,7 @@ DLAppPage {
     readonly property color redSoft: Qt.rgba(220 / 255, 53 / 255, 69 / 255, 0.10)
     readonly property color pink: "#e94f72"
 
-    readonly property bool hasWord: !!word && Number(word.id || 0) > 0
+    readonly property bool hasWord: !!word && (word.id || "").length > 0
     readonly property bool hasExamples: fieldText("example_phrase_de").length > 0
                                 || fieldText("example_phrase_native").length > 0
 
@@ -53,8 +53,8 @@ DLAppPage {
     }
 
     function loadWord() {
-        var id = Number(appStateManager.selectedWordId || -1)
-        if (id <= 0) {
+        var id = (appStateManager.selectedWordId || "").trim()
+        if (id.length === 0) {
             word = ({})
             errorMessage = "Unable to load this word."
             return
@@ -76,14 +76,14 @@ DLAppPage {
     }
 
     function editWord() {
-        var id = Number(word.id || appStateManager.selectedWordId || -1)
-        if (id > 0) {
+        var id = (word.id || appStateManager.selectedWordId || "").trim()
+        if (id.length > 0) {
             appStateManager.openEditWord(id)
         }
     }
 
     function confirmDelete() {
-        pendingDeleteWordId = Number(word.id || -1)
+        pendingDeleteWordId = word.id || ""
         pendingDeleteWord = fieldText("german_word")
         deleteWordDialog.open()
     }
@@ -94,7 +94,7 @@ DLAppPage {
             return
         }
 
-        pendingDeleteWordId = -1
+        pendingDeleteWordId = ""
         pendingDeleteWord = ""
         appStateManager.goWordsPage()
     }
@@ -114,13 +114,13 @@ DLAppPage {
     }
 
     function groupForWord() {
-        var groupId = Number(word.group_id || -1)
-        if (groupId <= 0) {
+        var groupId = word.group_id || ""
+        if (groupId.length === 0) {
             return ({})
         }
 
         for (var i = 0; i < groupOptions.length; ++i) {
-            if (Number(groupOptions[i].id || -1) === groupId) {
+            if (groupOptions[i].id === groupId) {
                 return groupOptions[i]
             }
         }

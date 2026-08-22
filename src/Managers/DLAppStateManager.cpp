@@ -51,7 +51,7 @@ QString DLAppStateManager::lastError() const
     return m_lastError;
 }
 
-int DLAppStateManager::selectedWordId() const
+QString DLAppStateManager::selectedWordId() const
 {
     return m_selectedWordId;
 }
@@ -62,7 +62,7 @@ void DLAppStateManager::goWordDetails() { navigateTo(WordDetails); }
 
 void DLAppStateManager::goAddEditWordPage()
 {
-    setSelectedWordId(-1);
+    setSelectedWordId(QString());
     navigateTo(AddEditWordPage);
 }
 
@@ -90,20 +90,20 @@ QVariantList DLAppStateManager::availableGroups()
     return groups;
 }
 
-int DLAppStateManager::createGroup(const QString& name, const QString& colorHex)
+QString DLAppStateManager::createGroup(const QString& name, const QString& colorHex)
 {
-    const int newId = m_groupService->createGroup(name, colorHex);
+    const QString newId = m_groupService->createGroup(name, colorHex);
     setLastError(m_groupService->lastError());
-    if (newId >= 0) {
+    if (!newId.isEmpty()) {
         emit groupsChanged();
         emit wordsChanged();
     }
     return newId;
 }
 
-bool DLAppStateManager::updateGroup(int id, const QString& name, const QString& colorHex)
+bool DLAppStateManager::updateGroup(const QString& syncId, const QString& name, const QString& colorHex)
 {
-    const bool success = m_groupService->updateGroup(id, name, colorHex);
+    const bool success = m_groupService->updateGroup(syncId, name, colorHex);
     setLastError(m_groupService->lastError());
     if (success) {
         emit groupsChanged();
@@ -112,9 +112,9 @@ bool DLAppStateManager::updateGroup(int id, const QString& name, const QString& 
     return success;
 }
 
-bool DLAppStateManager::deleteGroup(int id)
+bool DLAppStateManager::deleteGroup(const QString& syncId)
 {
-    const bool success = m_groupService->deleteGroup(id);
+    const bool success = m_groupService->deleteGroup(syncId);
     setLastError(m_groupService->lastError());
     if (success) {
         emit groupsChanged();
@@ -123,23 +123,23 @@ bool DLAppStateManager::deleteGroup(int id)
     return success;
 }
 
-QVariantList DLAppStateManager::loadWords(const QString& sortMode, int groupId)
+QVariantList DLAppStateManager::loadWords(const QString& sortMode, const QString& groupSyncId)
 {
-    const QVariantList words = m_wordService->loadWords(sortMode, groupId);
+    const QVariantList words = m_wordService->loadWords(sortMode, groupSyncId);
     setLastError(m_wordService->lastError());
     return words;
 }
 
-QVariantList DLAppStateManager::searchWords(const QString& query, const QString& sortMode, int groupId)
+QVariantList DLAppStateManager::searchWords(const QString& query, const QString& sortMode, const QString& groupSyncId)
 {
-    const QVariantList words = m_wordService->searchWords(query, sortMode, groupId);
+    const QVariantList words = m_wordService->searchWords(query, sortMode, groupSyncId);
     setLastError(m_wordService->lastError());
     return words;
 }
 
-int DLAppStateManager::wordCount(int groupId)
+int DLAppStateManager::wordCount(const QString& groupSyncId)
 {
-    const int count = m_wordService->wordCount(groupId);
+    const int count = m_wordService->wordCount(groupSyncId);
     setLastError(m_wordService->lastError());
     return count;
 }
@@ -163,26 +163,26 @@ QVariantMap DLAppStateManager::databaseStats()
     return stats;
 }
 
-QVariantMap DLAppStateManager::wordById(int id)
+QVariantMap DLAppStateManager::wordById(const QString& syncId)
 {
-    const QVariantMap word = m_wordService->wordById(id);
+    const QVariantMap word = m_wordService->wordById(syncId);
     setLastError(m_wordService->lastError());
     return word;
 }
 
-int DLAppStateManager::createWord(const QVariantMap& wordData)
+QString DLAppStateManager::createWord(const QVariantMap& wordData)
 {
-    const int newId = m_wordService->createWord(wordData);
+    const QString newId = m_wordService->createWord(wordData);
     setLastError(m_wordService->lastError());
-    if (newId >= 0) {
+    if (!newId.isEmpty()) {
         emit wordsChanged();
     }
     return newId;
 }
 
-bool DLAppStateManager::updateWord(int id, const QVariantMap& wordData)
+bool DLAppStateManager::updateWord(const QString& syncId, const QVariantMap& wordData)
 {
-    const bool success = m_wordService->updateWord(id, wordData);
+    const bool success = m_wordService->updateWord(syncId, wordData);
     setLastError(m_wordService->lastError());
     if (success) {
         emit wordsChanged();
@@ -190,13 +190,13 @@ bool DLAppStateManager::updateWord(int id, const QVariantMap& wordData)
     return success;
 }
 
-bool DLAppStateManager::deleteWord(int id)
+bool DLAppStateManager::deleteWord(const QString& syncId)
 {
-    const bool success = m_wordService->deleteWord(id);
+    const bool success = m_wordService->deleteWord(syncId);
     setLastError(m_wordService->lastError());
     if (success) {
-        if (m_selectedWordId == id) {
-            setSelectedWordId(-1);
+        if (m_selectedWordId == syncId) {
+            setSelectedWordId(QString());
         }
         emit wordsChanged();
     }
@@ -271,7 +271,7 @@ bool DLAppStateManager::importDatabaseReplace(const QString& sourcePath)
         return false;
     }
 
-    setSelectedWordId(-1);
+    setSelectedWordId(QString());
     setLastError(QString());
     emit wordsChanged();
     emit groupsChanged();
@@ -302,7 +302,7 @@ bool DLAppStateManager::deleteAllData()
     const bool success = DLDatabaseManager::instance().deleteAllData();
     setLastError(success ? QString() : DLDatabaseManager::instance().lastError());
     if (success) {
-        setSelectedWordId(-1);
+        setSelectedWordId(QString());
         m_quizService->resetQuiz();
         emit wordsChanged();
         emit groupsChanged();
@@ -311,26 +311,26 @@ bool DLAppStateManager::deleteAllData()
     return success;
 }
 
-void DLAppStateManager::openWordDetails(int id)
+void DLAppStateManager::openWordDetails(const QString& syncId)
 {
-    if (id <= 0) {
+    if (syncId.trimmed().isEmpty()) {
         setLastError(QStringLiteral("Invalid word id."));
         return;
     }
 
-    setSelectedWordId(id);
+    setSelectedWordId(syncId.trimmed());
     setLastError(QString());
     navigateTo(WordDetails);
 }
 
-void DLAppStateManager::openEditWord(int id)
+void DLAppStateManager::openEditWord(const QString& syncId)
 {
-    if (id <= 0) {
+    if (syncId.trimmed().isEmpty()) {
         setLastError(QStringLiteral("Invalid word id."));
         return;
     }
 
-    setSelectedWordId(id);
+    setSelectedWordId(syncId.trimmed());
     setLastError(QString());
     navigateTo(AddEditWordPage);
 }
@@ -342,9 +342,9 @@ QVariantList DLAppStateManager::availableQuizModes()
     return modes;
 }
 
-int DLAppStateManager::availableQuizQuestionCount(const QString& type, int groupId, const QString& partOfSpeech)
+int DLAppStateManager::availableQuizQuestionCount(const QString& type, const QString& groupSyncId, const QString& partOfSpeech)
 {
-    const int count = m_quizService->availableQuizQuestionCount(type, groupId, partOfSpeech);
+    const int count = m_quizService->availableQuizQuestionCount(type, groupSyncId, partOfSpeech);
     setLastError(m_quizService->lastError());
     return count;
 }
@@ -354,16 +354,16 @@ QString DLAppStateManager::selectedQuizType() const
     return m_quizService->selectedQuizType();
 }
 
-bool DLAppStateManager::canStartQuiz(const QString& type, int groupId, int questionCount, const QString& partOfSpeech)
+bool DLAppStateManager::canStartQuiz(const QString& type, const QString& groupSyncId, int questionCount, const QString& partOfSpeech)
 {
-    const bool success = m_quizService->canStartQuiz(type, groupId, questionCount, partOfSpeech);
+    const bool success = m_quizService->canStartQuiz(type, groupSyncId, questionCount, partOfSpeech);
     setLastError(m_quizService->lastError());
     return success;
 }
 
-bool DLAppStateManager::startQuiz(const QString& type, int groupId, int questionCount, const QString& partOfSpeech)
+bool DLAppStateManager::startQuiz(const QString& type, const QString& groupSyncId, int questionCount, const QString& partOfSpeech)
 {
-    const bool success = m_quizService->startQuiz(type, groupId, questionCount, partOfSpeech);
+    const bool success = m_quizService->startQuiz(type, groupSyncId, questionCount, partOfSpeech);
     setLastError(m_quizService->lastError());
     if (success) {
         emit quizStateChanged();
@@ -438,13 +438,13 @@ void DLAppStateManager::setLastError(const QString& error)
     emit lastErrorChanged();
 }
 
-void DLAppStateManager::setSelectedWordId(int id)
+void DLAppStateManager::setSelectedWordId(const QString& syncId)
 {
-    if (m_selectedWordId == id) {
+    if (m_selectedWordId == syncId) {
         return;
     }
 
-    m_selectedWordId = id;
+    m_selectedWordId = syncId;
     emit selectedWordIdChanged();
 }
 

@@ -4,20 +4,28 @@
 #include "DLLogging.h"
 #include "../Models/DLModelMappers.h"
 
+#include <QSqlError>
+#include <QSqlQuery>
+#include <QUuid>
+
 DLGroupRepository::DLGroupRepository(DLDatabaseManager& database)
     : m_database(database)
 {
 }
 
-int DLGroupRepository::insertGroup(const DLWordGroup& group)
+QString DLGroupRepository::insertGroup(const DLWordGroup& group)
 {
     const qint64 now = DLDatabaseManager::currentUnixTime();
+    const QString syncId = group.syncId.trimmed().isEmpty()
+        ? QUuid::createUuid().toString(QUuid::WithoutBraces)
+        : group.syncId.trimmed();
     const int newId = m_database.executeInsert(
         QStringLiteral(R"(
-            INSERT INTO groups (name, color_hex, created_at, updated_at)
-            VALUES (:name, :color_hex, :created_at, :updated_at);
+            INSERT INTO groups (sync_id, name, color_hex, created_at, updated_at)
+            VALUES (:sync_id, :name, :color_hex, :created_at, :updated_at);
         )"),
         {
+            { QStringLiteral(":sync_id"), syncId },
             { QStringLiteral(":name"), group.name },
             { QStringLiteral(":color_hex"), group.colorHex.isEmpty() ? QStringLiteral("#3366CC") : group.colorHex },
             { QStringLiteral(":created_at"), now },
@@ -25,10 +33,11 @@ int DLGroupRepository::insertGroup(const DLWordGroup& group)
         });
     if (newId < 0) {
         qCWarning(dlRepo) << "Failed to insert group:" << m_database.lastError();
+        return {};
     } else {
-        qCDebug(dlRepo) << "Inserted group with id" << newId;
+        qCDebug(dlRepo) << "Inserted group with sync id" << syncId;
     }
-    return newId;
+    return syncId;
 }
 
 bool DLGroupRepository::updateGroup(const DLWordGroup& group)
@@ -39,27 +48,66 @@ bool DLGroupRepository::updateGroup(const DLWordGroup& group)
             SET name = :name,
                 color_hex = :color_hex,
                 updated_at = :updated_at
-            WHERE id = :id;
+            WHERE sync_id = :sync_id
+              AND deleted_at IS NULL;
         )"),
         {
-            { QStringLiteral(":id"), group.id },
+            { QStringLiteral(":sync_id"), group.syncId },
             { QStringLiteral(":name"), group.name },
             { QStringLiteral(":color_hex"), group.colorHex.isEmpty() ? QStringLiteral("#3366CC") : group.colorHex },
             { QStringLiteral(":updated_at"), DLDatabaseManager::currentUnixTime() }
         });
     if (!success) {
-        qCWarning(dlRepo) << "Failed to update group" << group.id << ":" << m_database.lastError();
+        qCWarning(dlRepo) << "Failed to update group" << group.syncId << ":" << m_database.lastError();
     }
     return success;
 }
 
-bool DLGroupRepository::deleteGroup(int id)
+bool DLGroupRepository::deleteGroup(const QString& syncId)
 {
-    const bool success = m_database.executeSql(
-        QStringLiteral("DELETE FROM groups WHERE id = :id;"),
-        {{ QStringLiteral(":id"), id }});
+    const bool success = m_database.transaction([&](QSqlDatabase& db, QString* error) {
+        const qint64 now = DLDatabaseManager::currentUnixTime();
+
+        QSqlQuery tombstone(db);
+        tombstone.prepare(QStringLiteral(R"(
+            UPDATE groups
+            SET deleted_at = :deleted_at,
+                updated_at = :updated_at
+            WHERE sync_id = :sync_id
+              AND deleted_at IS NULL;
+        )"));
+        tombstone.bindValue(QStringLiteral(":sync_id"), syncId);
+        tombstone.bindValue(QStringLiteral(":deleted_at"), now);
+        tombstone.bindValue(QStringLiteral(":updated_at"), now);
+        if (!tombstone.exec()) {
+            if (error) {
+                *error = tombstone.lastError().text();
+            }
+            return false;
+        }
+
+        QSqlQuery unlinkWords(db);
+        unlinkWords.prepare(QStringLiteral(R"(
+            UPDATE words
+            SET group_id = NULL,
+                group_sync_id = NULL,
+                updated_at = :updated_at
+            WHERE group_sync_id = :sync_id
+              AND deleted_at IS NULL;
+        )"));
+        unlinkWords.bindValue(QStringLiteral(":sync_id"), syncId);
+        unlinkWords.bindValue(QStringLiteral(":updated_at"), now);
+        if (!unlinkWords.exec()) {
+            if (error) {
+                *error = unlinkWords.lastError().text();
+            }
+            return false;
+        }
+
+        return true;
+    });
     if (!success) {
-        qCWarning(dlRepo) << "Failed to delete group" << id << ":" << m_database.lastError();
+        qCWarning(dlRepo) << "Failed to delete group" << syncId << ":" << m_database.lastError();
     }
     return success;
 }
@@ -67,9 +115,11 @@ bool DLGroupRepository::deleteGroup(int id)
 QList<DLWordGroup> DLGroupRepository::fetchAllGroups()
 {
     const QVariantList rows = m_database.selectRows(QStringLiteral(R"(
-        SELECT g.id, g.name, g.color_hex, g.created_at, g.updated_at,
+        SELECT g.id, g.name, g.color_hex, g.created_at, g.updated_at, g.deleted_at,
+               g.sync_id,
                (SELECT COUNT(*) FROM words WHERE group_id = g.id AND deleted_at IS NULL) AS word_count
         FROM groups g
+        WHERE g.deleted_at IS NULL
         ORDER BY g.name;
     )"));
 
@@ -80,21 +130,23 @@ QList<DLWordGroup> DLGroupRepository::fetchAllGroups()
     return groups;
 }
 
-DLWordGroup DLGroupRepository::fetchGroupById(int id)
+DLWordGroup DLGroupRepository::fetchGroupById(const QString& syncId)
 {
     const QVariantMap row = m_database.selectOneRow(
         QStringLiteral(R"(
-            SELECT g.id, g.name, g.color_hex, g.created_at, g.updated_at,
+            SELECT g.id, g.name, g.color_hex, g.created_at, g.updated_at, g.deleted_at,
+                   g.sync_id,
                    (SELECT COUNT(*) FROM words WHERE group_id = g.id AND deleted_at IS NULL) AS word_count
             FROM groups g
-            WHERE g.id = :id;
+            WHERE g.sync_id = :sync_id
+              AND g.deleted_at IS NULL;
         )"),
-        {{ QStringLiteral(":id"), id }});
+        {{ QStringLiteral(":sync_id"), syncId }});
 
     return DLModelMappers::groupFromMap(row);
 }
 
 int DLGroupRepository::getGroupCount()
 {
-    return m_database.selectInt(QStringLiteral("SELECT COUNT(*) FROM groups;"));
+    return m_database.selectInt(QStringLiteral("SELECT COUNT(*) FROM groups WHERE deleted_at IS NULL;"));
 }

@@ -19,6 +19,10 @@ private slots:
     void openDatabaseOpensTemporarySqliteDatabase();
     void createTablesIfNeededCreatesRequiredTables();
     void createIndexesIfNeededCreatesExpectedIndexes();
+    void openDatabaseRecordsSqliteSchemaVersion();
+    void cleanDatabaseCreatesUuidIdentityColumns();
+    void cleanDatabaseCreatesSyncOutboxSchema();
+    void insertsPopulateUuidIdentities();
     void closeDatabaseClosesSafely();
     void lastErrorIsSetWhenOperationFails();
     void selectRowsReturnsEmptyListForEmptyValidResult();
@@ -32,6 +36,7 @@ private:
     QString m_dbPath;
 
     bool tableExists(const QString& tableName);
+    bool columnExists(const QString& tableName, const QString& columnName);
     bool indexExists(const QString& indexName);
 };
 
@@ -58,6 +63,16 @@ bool TestDatabaseManager::tableExists(const QString& tableName)
                {{ QStringLiteral(":name"), tableName }}) == 1;
 }
 
+bool TestDatabaseManager::columnExists(const QString& tableName, const QString& columnName)
+{
+    return DLDatabaseManager::instance().selectInt(
+               QStringLiteral("SELECT COUNT(*) FROM pragma_table_info(:table_name) WHERE name = :column_name;"),
+               {
+                   { QStringLiteral(":table_name"), tableName },
+                   { QStringLiteral(":column_name"), columnName }
+               }) == 1;
+}
+
 bool TestDatabaseManager::indexExists(const QString& indexName)
 {
     return DLDatabaseManager::instance().selectInt(
@@ -77,12 +92,15 @@ void TestDatabaseManager::createTablesIfNeededCreatesRequiredTables()
              qPrintable(DLDatabaseManager::instance().lastError()));
 
     const QStringList tables = {
+        QStringLiteral("schema_version"),
         QStringLiteral("groups"),
         QStringLiteral("words"),
         QStringLiteral("word_review_stats"),
         QStringLiteral("noun_forms"),
         QStringLiteral("verb_forms"),
-        QStringLiteral("adjective_forms")
+        QStringLiteral("adjective_forms"),
+        QStringLiteral("sync_outbox_events"),
+        QStringLiteral("sync_acknowledged_event_diagnostics")
     };
 
     for (const QString& tableName : tables) {
@@ -96,16 +114,121 @@ void TestDatabaseManager::createIndexesIfNeededCreatesExpectedIndexes()
              qPrintable(DLDatabaseManager::instance().lastError()));
 
     const QStringList indexes = {
+        QStringLiteral("idx_groups_sync_id"),
+        QStringLiteral("idx_groups_deleted_at"),
+        QStringLiteral("idx_words_sync_id"),
         QStringLiteral("idx_words_group_id"),
+        QStringLiteral("idx_words_group_sync_id"),
         QStringLiteral("idx_words_normalized_german"),
         QStringLiteral("idx_words_part_of_speech"),
         QStringLiteral("idx_words_unique_active_translation"),
-        QStringLiteral("idx_word_review_stats_due_at")
+        QStringLiteral("idx_word_review_stats_word_sync_id"),
+        QStringLiteral("idx_word_review_stats_due_at"),
+        QStringLiteral("idx_sync_outbox_events_created_at"),
+        QStringLiteral("idx_sync_outbox_events_next_attempt_after"),
+        QStringLiteral("idx_sync_outbox_events_entity"),
+        QStringLiteral("idx_sync_acknowledged_event_diagnostics_acknowledged_at"),
+        QStringLiteral("idx_sync_acknowledged_event_diagnostics_entity")
     };
 
     for (const QString& indexName : indexes) {
         QVERIFY2(indexExists(indexName), qPrintable(QStringLiteral("Missing index: %1").arg(indexName)));
     }
+}
+
+void TestDatabaseManager::openDatabaseRecordsSqliteSchemaVersion()
+{
+    const QVariantMap row = DLDatabaseManager::instance().selectOneRow(
+        QStringLiteral("SELECT major, minor FROM schema_version WHERE component = 'sqlite';"));
+    QCOMPARE(row.value(QStringLiteral("major")).toInt(), 1);
+    QCOMPARE(row.value(QStringLiteral("minor")).toInt(), 1);
+    QCOMPARE(DLDatabaseManager::instance().selectInt(QStringLiteral("PRAGMA user_version;")), 1001);
+}
+
+void TestDatabaseManager::cleanDatabaseCreatesUuidIdentityColumns()
+{
+    QVERIFY(columnExists(QStringLiteral("groups"), QStringLiteral("sync_id")));
+    QVERIFY(columnExists(QStringLiteral("groups"), QStringLiteral("deleted_at")));
+    QVERIFY(columnExists(QStringLiteral("words"), QStringLiteral("sync_id")));
+    QVERIFY(columnExists(QStringLiteral("words"), QStringLiteral("group_sync_id")));
+    QVERIFY(columnExists(QStringLiteral("word_review_stats"), QStringLiteral("word_sync_id")));
+}
+
+void TestDatabaseManager::cleanDatabaseCreatesSyncOutboxSchema()
+{
+    const QStringList outboxColumns = {
+        QStringLiteral("event_id"),
+        QStringLiteral("contract_version"),
+        QStringLiteral("device_id"),
+        QStringLiteral("entity_type"),
+        QStringLiteral("entity_id"),
+        QStringLiteral("operation"),
+        QStringLiteral("updated_at"),
+        QStringLiteral("envelope_json"),
+        QStringLiteral("payload_json"),
+        QStringLiteral("created_at"),
+        QStringLiteral("send_attempt_count"),
+        QStringLiteral("last_attempted_at"),
+        QStringLiteral("next_attempt_after"),
+        QStringLiteral("last_error")
+    };
+
+    for (const QString& columnName : outboxColumns) {
+        QVERIFY2(columnExists(QStringLiteral("sync_outbox_events"), columnName),
+                 qPrintable(QStringLiteral("Missing sync_outbox_events.%1").arg(columnName)));
+    }
+
+    const QStringList diagnosticColumns = {
+        QStringLiteral("event_id"),
+        QStringLiteral("contract_version"),
+        QStringLiteral("entity_type"),
+        QStringLiteral("entity_id"),
+        QStringLiteral("operation"),
+        QStringLiteral("updated_at"),
+        QStringLiteral("created_at"),
+        QStringLiteral("acknowledged_at"),
+        QStringLiteral("server_sequence"),
+        QStringLiteral("canonical_result_json"),
+        QStringLiteral("diagnostic_json")
+    };
+
+    for (const QString& columnName : diagnosticColumns) {
+        QVERIFY2(columnExists(QStringLiteral("sync_acknowledged_event_diagnostics"), columnName),
+                 qPrintable(QStringLiteral("Missing sync_acknowledged_event_diagnostics.%1").arg(columnName)));
+    }
+}
+
+void TestDatabaseManager::insertsPopulateUuidIdentities()
+{
+    const QString groupId = DLDatabaseManager::instance().insertGroup(QStringLiteral("Basics"), QStringLiteral("#112233"));
+    QVERIFY(!groupId.isEmpty());
+
+    const QString wordId = DLDatabaseManager::instance().insertWord(
+        QStringLiteral("Haus"),
+        QStringLiteral("das"),
+        QStringLiteral("Nomen"),
+        QStringLiteral("house"),
+        QString(),
+        QString(),
+        groupId);
+    QVERIFY(!wordId.isEmpty());
+
+    const QVariantMap group = DLDatabaseManager::instance().selectOneRow(
+        QStringLiteral("SELECT sync_id FROM groups WHERE sync_id = :id;"),
+        {{ QStringLiteral(":id"), groupId }});
+    const QVariantMap word = DLDatabaseManager::instance().selectOneRow(
+        QStringLiteral("SELECT sync_id, group_sync_id FROM words WHERE sync_id = :id;"),
+        {{ QStringLiteral(":id"), wordId }});
+    const QVariantMap stats = DLDatabaseManager::instance().selectOneRow(
+        QStringLiteral("SELECT word_sync_id FROM word_review_stats WHERE word_sync_id = :word_id;"),
+        {{ QStringLiteral(":word_id"), wordId }});
+
+    const QString groupSyncId = group.value(QStringLiteral("sync_id")).toString();
+    const QString wordSyncId = word.value(QStringLiteral("sync_id")).toString();
+    QVERIFY(!QUuid(groupSyncId).isNull());
+    QVERIFY(!QUuid(wordSyncId).isNull());
+    QCOMPARE(word.value(QStringLiteral("group_sync_id")).toString(), groupSyncId);
+    QCOMPARE(stats.value(QStringLiteral("word_sync_id")).toString(), wordSyncId);
 }
 
 void TestDatabaseManager::closeDatabaseClosesSafely()
@@ -136,8 +259,9 @@ void TestDatabaseManager::selectRowsReturnsEmptyListForEmptyValidResult()
 void TestDatabaseManager::namedBindingsAcceptColonlessKeys()
 {
     QVERIFY2(DLDatabaseManager::instance().executeSql(
-                 QStringLiteral("INSERT INTO groups (name, color_hex, created_at, updated_at) VALUES (:name, :color_hex, :created_at, :updated_at);"),
+                 QStringLiteral("INSERT INTO groups (sync_id, name, color_hex, created_at, updated_at) VALUES (:sync_id, :name, :color_hex, :created_at, :updated_at);"),
                  {
+                     { QStringLiteral("sync_id"), QUuid::createUuid().toString(QUuid::WithoutBraces) },
                      { QStringLiteral("name"), QStringLiteral("Basics") },
                      { QStringLiteral("color_hex"), QStringLiteral("#112233") },
                      { QStringLiteral("created_at"), 10 },
@@ -240,20 +364,23 @@ void TestDatabaseManager::openDatabaseMigratesLegacySchema()
     QCOMPARE(groups.first().toMap().value(QStringLiteral("name")).toString(), QStringLiteral("Basics"));
     QVERIFY(groups.first().toMap().value(QStringLiteral("updated_at")).toLongLong() > 0);
 
-    const QVariantList words = DLDatabaseManager::instance().fetchAllWords(QStringLiteral("newest"), -1);
+    const QVariantList words = DLDatabaseManager::instance().fetchAllWords(QStringLiteral("newest"));
     QCOMPARE(words.size(), 1);
     const QVariantMap word = words.first().toMap();
     QCOMPARE(word.value(QStringLiteral("german_word")).toString(), QStringLiteral("gehen"));
     QCOMPARE(word.value(QStringLiteral("praeteritum_form")).toString(), QStringLiteral("ging"));
     QCOMPARE(word.value(QStringLiteral("partizip_ii_form")).toString(), QStringLiteral("gegangen"));
+    QVERIFY(tableExists(QStringLiteral("sync_outbox_events")));
+    QVERIFY(tableExists(QStringLiteral("sync_acknowledged_event_diagnostics")));
+    QCOMPARE(DLDatabaseManager::instance().selectInt(QStringLiteral("PRAGMA user_version;")), 1001);
 }
 
 void TestDatabaseManager::deleteAllDataRemovesStoredData()
 {
-    const int groupId = DLDatabaseManager::instance().insertGroup(QStringLiteral("Basics"), QStringLiteral("#112233"));
-    QVERIFY(groupId > 0);
+    const QString groupId = DLDatabaseManager::instance().insertGroup(QStringLiteral("Basics"), QStringLiteral("#112233"));
+    QVERIFY(!groupId.isEmpty());
 
-    const int wordId = DLDatabaseManager::instance().insertWord(
+    const QString wordId = DLDatabaseManager::instance().insertWord(
         QStringLiteral("Haus"),
         QStringLiteral("das"),
         QStringLiteral("Nomen"),
@@ -261,13 +388,41 @@ void TestDatabaseManager::deleteAllDataRemovesStoredData()
         QString(),
         QString(),
         groupId);
-    QVERIFY(wordId > 0);
+    QVERIFY(!wordId.isEmpty());
+
+    const QString eventId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    QVERIFY2(DLDatabaseManager::instance().executeSql(QStringLiteral(R"(
+        INSERT INTO sync_outbox_events
+            (event_id, contract_version, entity_type, entity_id, operation,
+             updated_at, envelope_json, payload_json, created_at)
+        VALUES
+            (:event_id, '1.0', 'word', :entity_id, 'create',
+             10, '{}', '{}', 10);
+    )"), {
+            { QStringLiteral(":event_id"), eventId },
+            { QStringLiteral(":entity_id"), wordId }
+        }),
+        qPrintable(DLDatabaseManager::instance().lastError()));
+    QVERIFY2(DLDatabaseManager::instance().executeSql(QStringLiteral(R"(
+        INSERT INTO sync_acknowledged_event_diagnostics
+            (event_id, contract_version, entity_type, entity_id, operation,
+             updated_at, created_at, acknowledged_at)
+        VALUES
+            (:event_id, '1.0', 'word', :entity_id, 'create',
+             10, 10, 11);
+    )"), {
+            { QStringLiteral(":event_id"), eventId },
+            { QStringLiteral(":entity_id"), wordId }
+        }),
+        qPrintable(DLDatabaseManager::instance().lastError()));
 
     QVERIFY2(DLDatabaseManager::instance().deleteAllData(),
              qPrintable(DLDatabaseManager::instance().lastError()));
     QCOMPARE(DLDatabaseManager::instance().getGroupCount(), 0);
     QCOMPARE(DLDatabaseManager::instance().getWordCount(), 0);
     QCOMPARE(DLDatabaseManager::instance().selectInt(QStringLiteral("SELECT COUNT(*) FROM word_review_stats;")), 0);
+    QCOMPARE(DLDatabaseManager::instance().selectInt(QStringLiteral("SELECT COUNT(*) FROM sync_outbox_events;")), 0);
+    QCOMPARE(DLDatabaseManager::instance().selectInt(QStringLiteral("SELECT COUNT(*) FROM sync_acknowledged_event_diagnostics;")), 0);
 }
 
 QTEST_MAIN(TestDatabaseManager)

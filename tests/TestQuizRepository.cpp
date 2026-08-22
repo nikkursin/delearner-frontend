@@ -35,8 +35,8 @@ private:
                        const QString& native,
                        const QString& partOfSpeech,
                        const QString& article = QString(),
-                       int groupId = -1);
-    void seedWords(int groupA = -1, int groupB = -1);
+                       const QString& groupId = QString());
+    void seedWords(const QString& groupA = QString(), const QString& groupB = QString());
 };
 
 void TestQuizRepository::init()
@@ -59,24 +59,24 @@ DLWord TestQuizRepository::word(const QString& german,
                                 const QString& native,
                                 const QString& partOfSpeech,
                                 const QString& article,
-                                int groupId)
+                                const QString& groupId)
 {
     DLWord value;
     value.germanWord = german;
     value.nativeTranslation = native;
     value.partOfSpeech = partOfSpeech;
     value.article = article;
-    value.groupId = groupId;
+    value.groupSyncId = groupId;
     return value;
 }
 
-void TestQuizRepository::seedWords(int groupA, int groupB)
+void TestQuizRepository::seedWords(const QString& groupA, const QString& groupB)
 {
     DLWordRepository words(DLDatabaseManager::instance());
-    QVERIFY(words.insertWord(word(QStringLiteral("Haus"), QStringLiteral("house"), QStringLiteral("Nomen"), QStringLiteral("das"), groupA)) > 0);
-    QVERIFY(words.insertWord(word(QStringLiteral("Baum"), QStringLiteral("tree"), QStringLiteral("Nomen"), QStringLiteral("der"), groupA)) > 0);
-    QVERIFY(words.insertWord(word(QStringLiteral("gehen"), QStringLiteral("go"), QStringLiteral("Verb"), QString(), groupB)) > 0);
-    QVERIFY(words.insertWord(word(QStringLiteral("schoen"), QStringLiteral("beautiful"), QStringLiteral("Adjektiv"), QString(), groupB)) > 0);
+    QVERIFY(!words.insertWord(word(QStringLiteral("Haus"), QStringLiteral("house"), QStringLiteral("Nomen"), QStringLiteral("das"), groupA)).isEmpty());
+    QVERIFY(!words.insertWord(word(QStringLiteral("Baum"), QStringLiteral("tree"), QStringLiteral("Nomen"), QStringLiteral("der"), groupA)).isEmpty());
+    QVERIFY(!words.insertWord(word(QStringLiteral("gehen"), QStringLiteral("go"), QStringLiteral("Verb"), QString(), groupB)).isEmpty());
+    QVERIFY(!words.insertWord(word(QStringLiteral("schoen"), QStringLiteral("beautiful"), QStringLiteral("Adjektiv"), QString(), groupB)).isEmpty());
 }
 
 void TestQuizRepository::getTranslationQuizWordCountReturnsCorrectCount()
@@ -122,10 +122,10 @@ void TestQuizRepository::getNounCountReturnsCorrectCount()
 void TestQuizRepository::nounQueriesAcceptCurrentNounLabels()
 {
     DLWordRepository words(DLDatabaseManager::instance());
-    QVERIFY(words.insertWord(word(QStringLiteral("Haus"), QStringLiteral("house"), QStringLiteral("Nomen"), QStringLiteral("das"))) > 0);
-    QVERIFY(words.insertWord(word(QStringLiteral("Baum"), QStringLiteral("tree"), QStringLiteral("Substantiv"), QStringLiteral("der"))) > 0);
-    QVERIFY(words.insertWord(word(QStringLiteral("Tuer"), QStringLiteral("door"), QStringLiteral("noun"), QStringLiteral("die"))) > 0);
-    QVERIFY(words.insertWord(word(QStringLiteral("gehen"), QStringLiteral("go"), QStringLiteral("Verb"))) > 0);
+    QVERIFY(!words.insertWord(word(QStringLiteral("Haus"), QStringLiteral("house"), QStringLiteral("Nomen"), QStringLiteral("das"))).isEmpty());
+    QVERIFY(!words.insertWord(word(QStringLiteral("Baum"), QStringLiteral("tree"), QStringLiteral("Substantiv"), QStringLiteral("der"))).isEmpty());
+    QVERIFY(!words.insertWord(word(QStringLiteral("Tuer"), QStringLiteral("door"), QStringLiteral("noun"), QStringLiteral("die"))).isEmpty());
+    QVERIFY(!words.insertWord(word(QStringLiteral("gehen"), QStringLiteral("go"), QStringLiteral("Verb"))).isEmpty());
 
     DLQuizRepository repository(DLDatabaseManager::instance());
     QCOMPARE(repository.getNounCount(), 3);
@@ -139,8 +139,8 @@ void TestQuizRepository::groupFilteringWorksForQuizQueries()
     a.name = QStringLiteral("Basics");
     DLWordGroup b;
     b.name = QStringLiteral("Travel");
-    const int groupA = groups.insertGroup(a);
-    const int groupB = groups.insertGroup(b);
+    const QString groupA = groups.insertGroup(a);
+    const QString groupB = groups.insertGroup(b);
     seedWords(groupA, groupB);
 
     DLQuizRepository repository(DLDatabaseManager::instance());
@@ -155,10 +155,10 @@ void TestQuizRepository::partOfSpeechFilteringWorks()
     seedWords();
     DLQuizRepository repository(DLDatabaseManager::instance());
 
-    QCOMPARE(repository.getTranslationQuizWordCount(-1, QStringLiteral("Nomen")), 2);
-    QCOMPARE(repository.getTranslationQuizWordCount(-1, QStringLiteral("Verb")), 1);
+    QCOMPARE(repository.getTranslationQuizWordCount(QString(), QStringLiteral("Nomen")), 2);
+    QCOMPARE(repository.getTranslationQuizWordCount(QString(), QStringLiteral("Verb")), 1);
 
-    const QList<DLWord> verbs = repository.fetchTranslationQuizWords(10, -1, QStringLiteral("Verb"));
+    const QList<DLWord> verbs = repository.fetchTranslationQuizWords(10, QString(), QStringLiteral("Verb"));
     QCOMPARE(verbs.size(), 1);
     QCOMPARE(verbs.first().partOfSpeech, QStringLiteral("Verb"));
 }

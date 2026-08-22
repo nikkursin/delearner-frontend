@@ -7,6 +7,7 @@
 #include <QMutexLocker>
 #include <QSet>
 #include <QStringList>
+#include <QUuid>
 
 #include "DLDatabaseMaintenanceService.h"
 #include "DLGroupRepository.h"
@@ -17,6 +18,10 @@
 #include "../Models/DLModelMappers.h"
 
 namespace {
+constexpr int kSqliteSchemaMajor = 1;
+constexpr int kSqliteSchemaMinor = 1;
+constexpr int kSqliteUserVersion = kSqliteSchemaMajor * 1000 + kSqliteSchemaMinor;
+
 QStringList argumentKeys(const QVariantMap& args)
 {
     QStringList keys;
@@ -161,6 +166,92 @@ void logSqlFailure(const char* operation,
                     << "missingKeys:" << missingKeys
                     << "unusedKeys:" << unusedKeys;
 }
+
+QString createUuidString()
+{
+    return QUuid::createUuid().toString(QUuid::WithoutBraces);
+}
+
+bool execSimpleSql(QSqlDatabase& db, const QString& sql, QString* error)
+{
+    QSqlQuery query(db);
+    if (!query.exec(sql)) {
+        if (error) {
+            *error = query.lastError().text();
+        }
+        logSqlFailure("migration/exec", sql, {}, {}, {}, query.lastError());
+        return false;
+    }
+    return true;
+}
+
+bool backfillUuidColumn(QSqlDatabase& db,
+                        const QString& tableName,
+                        const QString& idColumnName,
+                        const QString& uuidColumnName,
+                        QString* error)
+{
+    QSqlQuery select(db);
+    const QString selectSql = QStringLiteral("SELECT %1 FROM %2 WHERE %3 IS NULL OR TRIM(%3) = '';")
+                                  .arg(idColumnName, tableName, uuidColumnName);
+    if (!select.exec(selectSql)) {
+        if (error) {
+            *error = select.lastError().text();
+        }
+        logSqlFailure("migration/selectUuidBackfill", selectSql, {}, {}, {}, select.lastError());
+        return false;
+    }
+
+    QList<int> rowIds;
+    while (select.next()) {
+        rowIds.append(select.value(0).toInt());
+    }
+
+    const QString updateSql = QStringLiteral("UPDATE %1 SET %2 = :uuid WHERE %3 = :id;")
+                                  .arg(tableName, uuidColumnName, idColumnName);
+    QSqlQuery update(db);
+    if (!update.prepare(updateSql)) {
+        if (error) {
+            *error = update.lastError().text();
+        }
+        logSqlFailure("migration/prepareUuidBackfill", updateSql, {}, {}, {}, update.lastError());
+        return false;
+    }
+
+    for (int id : rowIds) {
+        update.bindValue(QStringLiteral(":uuid"), createUuidString());
+        update.bindValue(QStringLiteral(":id"), id);
+        if (!update.exec()) {
+            if (error) {
+                *error = update.lastError().text();
+            }
+            logSqlFailure("migration/updateUuidBackfill", updateSql, {}, {}, {}, update.lastError());
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool recordCurrentSqliteSchemaVersion(QSqlDatabase& db, QString* error)
+{
+    if (!execMigrationSql(db, QStringLiteral(R"(
+        INSERT INTO schema_version (component, major, minor, updated_at)
+        VALUES ('sqlite', :major, :minor, :updated_at)
+        ON CONFLICT(component) DO UPDATE SET
+            major = excluded.major,
+            minor = excluded.minor,
+            updated_at = excluded.updated_at;
+    )"), error, {
+            { QStringLiteral(":major"), kSqliteSchemaMajor },
+            { QStringLiteral(":minor"), kSqliteSchemaMinor },
+            { QStringLiteral(":updated_at"), DLDatabaseManager::currentUnixTime() }
+        })) {
+        return false;
+    }
+
+    return execSimpleSql(db, QStringLiteral("PRAGMA user_version = %1;").arg(kSqliteUserVersion), error);
+}
 }
 
 DLDatabaseManager::DLDatabaseManager()
@@ -238,17 +329,28 @@ bool DLDatabaseManager::createTablesIfNeeded()
     qCDebug(dlDb) << "Creating database tables if needed";
     const QList<DLSqlCommand> commands = {
         { QStringLiteral(R"(
+            CREATE TABLE IF NOT EXISTS schema_version (
+                component TEXT PRIMARY KEY,
+                major INTEGER NOT NULL,
+                minor INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+        )"), {} },
+        { QStringLiteral(R"(
             CREATE TABLE IF NOT EXISTS groups (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sync_id TEXT NOT NULL UNIQUE,
                 name TEXT NOT NULL,
                 color_hex TEXT DEFAULT '#3366CC',
                 created_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL
+                updated_at INTEGER NOT NULL,
+                deleted_at INTEGER
             );
         )"), {} },
         { QStringLiteral(R"(
             CREATE TABLE IF NOT EXISTS words (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sync_id TEXT NOT NULL UNIQUE,
                 german_word TEXT NOT NULL,
                 normalized_german_word TEXT NOT NULL,
                 article TEXT,
@@ -258,16 +360,19 @@ bool DLDatabaseManager::createTablesIfNeeded()
                 example_phrase_de TEXT,
                 example_phrase_native TEXT,
                 group_id INTEGER,
+                group_sync_id TEXT,
                 notes TEXT,
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL,
                 deleted_at INTEGER,
-                FOREIGN KEY(group_id) REFERENCES groups(id) ON DELETE SET NULL
+                FOREIGN KEY(group_id) REFERENCES groups(id) ON DELETE SET NULL,
+                FOREIGN KEY(group_sync_id) REFERENCES groups(sync_id) ON DELETE SET NULL
             );
         )"), {} },
         { QStringLiteral(R"(
             CREATE TABLE IF NOT EXISTS word_review_stats (
                 word_id INTEGER PRIMARY KEY,
+                word_sync_id TEXT NOT NULL UNIQUE,
                 correct_answers INTEGER NOT NULL DEFAULT 0,
                 wrong_answers INTEGER NOT NULL DEFAULT 0,
                 last_reviewed_at INTEGER,
@@ -275,7 +380,8 @@ bool DLDatabaseManager::createTablesIfNeeded()
                 interval_days INTEGER DEFAULT 0,
                 due_at INTEGER,
                 updated_at INTEGER NOT NULL,
-                FOREIGN KEY(word_id) REFERENCES words(id) ON DELETE CASCADE
+                FOREIGN KEY(word_id) REFERENCES words(id) ON DELETE CASCADE,
+                FOREIGN KEY(word_sync_id) REFERENCES words(sync_id) ON DELETE CASCADE
             );
         )"), {} },
         { QStringLiteral(R"(
@@ -301,6 +407,39 @@ bool DLDatabaseManager::createTablesIfNeeded()
                 superlative_form TEXT,
                 FOREIGN KEY(word_id) REFERENCES words(id) ON DELETE CASCADE
             );
+        )"), {} },
+        { QStringLiteral(R"(
+            CREATE TABLE IF NOT EXISTS sync_outbox_events (
+                event_id TEXT PRIMARY KEY,
+                contract_version TEXT NOT NULL,
+                device_id TEXT,
+                entity_type TEXT NOT NULL,
+                entity_id TEXT NOT NULL,
+                operation TEXT NOT NULL CHECK(operation IN ('create', 'update', 'delete')),
+                updated_at INTEGER NOT NULL,
+                envelope_json TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                send_attempt_count INTEGER NOT NULL DEFAULT 0 CHECK(send_attempt_count >= 0),
+                last_attempted_at INTEGER,
+                next_attempt_after INTEGER,
+                last_error TEXT
+            );
+        )"), {} },
+        { QStringLiteral(R"(
+            CREATE TABLE IF NOT EXISTS sync_acknowledged_event_diagnostics (
+                event_id TEXT PRIMARY KEY,
+                contract_version TEXT NOT NULL,
+                entity_type TEXT NOT NULL,
+                entity_id TEXT NOT NULL,
+                operation TEXT NOT NULL CHECK(operation IN ('create', 'update', 'delete')),
+                updated_at INTEGER NOT NULL,
+                created_at INTEGER NOT NULL,
+                acknowledged_at INTEGER NOT NULL,
+                server_sequence INTEGER,
+                canonical_result_json TEXT,
+                diagnostic_json TEXT
+            );
         )"), {} }
     };
 
@@ -312,6 +451,53 @@ bool DLDatabaseManager::migrateSchemaIfNeeded()
     qCDebug(dlDb) << "Migrating database schema if needed";
     return transaction([&](QSqlDatabase& db, QString* error) {
         const qint64 now = DLDatabaseManager::currentUnixTime();
+
+        if (!execMigrationSql(db, QStringLiteral(R"(
+            CREATE TABLE IF NOT EXISTS schema_version (
+                component TEXT PRIMARY KEY,
+                major INTEGER NOT NULL,
+                minor INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+        )"), error)) {
+            return false;
+        }
+
+        if (!execMigrationSql(db, QStringLiteral(R"(
+            CREATE TABLE IF NOT EXISTS sync_outbox_events (
+                event_id TEXT PRIMARY KEY,
+                contract_version TEXT NOT NULL,
+                device_id TEXT,
+                entity_type TEXT NOT NULL,
+                entity_id TEXT NOT NULL,
+                operation TEXT NOT NULL CHECK(operation IN ('create', 'update', 'delete')),
+                updated_at INTEGER NOT NULL,
+                envelope_json TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                send_attempt_count INTEGER NOT NULL DEFAULT 0 CHECK(send_attempt_count >= 0),
+                last_attempted_at INTEGER,
+                next_attempt_after INTEGER,
+                last_error TEXT
+            );
+        )"), error)
+            || !execMigrationSql(db, QStringLiteral(R"(
+                CREATE TABLE IF NOT EXISTS sync_acknowledged_event_diagnostics (
+                    event_id TEXT PRIMARY KEY,
+                    contract_version TEXT NOT NULL,
+                    entity_type TEXT NOT NULL,
+                    entity_id TEXT NOT NULL,
+                    operation TEXT NOT NULL CHECK(operation IN ('create', 'update', 'delete')),
+                    updated_at INTEGER NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    acknowledged_at INTEGER NOT NULL,
+                    server_sequence INTEGER,
+                    canonical_result_json TEXT,
+                    diagnostic_json TEXT
+                );
+            )"), error)) {
+            return false;
+        }
 
         const bool groupsHasUpdatedAt = tableHasColumn(db, QStringLiteral("groups"), QStringLiteral("updated_at"), error);
         if (!error->isEmpty()) {
@@ -327,6 +513,89 @@ bool DLDatabaseManager::migrateSchemaIfNeeded()
                                      {{ QStringLiteral(":now"), now }})) {
                 return false;
             }
+        }
+
+        const bool groupsHasDeletedAt = tableHasColumn(db, QStringLiteral("groups"), QStringLiteral("deleted_at"), error);
+        if (!error->isEmpty()) {
+            return false;
+        }
+
+        if (!groupsHasDeletedAt) {
+            qCInfo(dlDb) << "Adding missing groups.deleted_at column";
+            if (!execMigrationSql(db, QStringLiteral("ALTER TABLE groups ADD COLUMN deleted_at INTEGER;"), error)) {
+                return false;
+            }
+        }
+
+        const bool groupsHasSyncId = tableHasColumn(db, QStringLiteral("groups"), QStringLiteral("sync_id"), error);
+        if (!error->isEmpty()) {
+            return false;
+        }
+        if (!groupsHasSyncId) {
+            qCInfo(dlDb) << "Adding missing groups.sync_id column";
+            if (!execMigrationSql(db, QStringLiteral("ALTER TABLE groups ADD COLUMN sync_id TEXT;"), error)
+                || !execMigrationSql(db, QStringLiteral("CREATE UNIQUE INDEX IF NOT EXISTS idx_groups_sync_id ON groups(sync_id);"), error)
+                || !backfillUuidColumn(db, QStringLiteral("groups"), QStringLiteral("id"), QStringLiteral("sync_id"), error)) {
+                return false;
+            }
+        }
+
+        const bool wordsHasSyncId = tableHasColumn(db, QStringLiteral("words"), QStringLiteral("sync_id"), error);
+        if (!error->isEmpty()) {
+            return false;
+        }
+        if (!wordsHasSyncId) {
+            qCInfo(dlDb) << "Adding missing words.sync_id column";
+            if (!execMigrationSql(db, QStringLiteral("ALTER TABLE words ADD COLUMN sync_id TEXT;"), error)
+                || !execMigrationSql(db, QStringLiteral("CREATE UNIQUE INDEX IF NOT EXISTS idx_words_sync_id ON words(sync_id);"), error)
+                || !backfillUuidColumn(db, QStringLiteral("words"), QStringLiteral("id"), QStringLiteral("sync_id"), error)) {
+                return false;
+            }
+        }
+
+        const bool wordsHasGroupSyncId = tableHasColumn(db, QStringLiteral("words"), QStringLiteral("group_sync_id"), error);
+        if (!error->isEmpty()) {
+            return false;
+        }
+        if (!wordsHasGroupSyncId) {
+            qCInfo(dlDb) << "Adding missing words.group_sync_id column";
+            if (!execMigrationSql(db, QStringLiteral("ALTER TABLE words ADD COLUMN group_sync_id TEXT;"), error)) {
+                return false;
+            }
+        }
+        if (!execMigrationSql(db, QStringLiteral(R"(
+            UPDATE words
+            SET group_sync_id = (
+                SELECT groups.sync_id
+                FROM groups
+                WHERE groups.id = words.group_id
+            )
+            WHERE group_id IS NOT NULL
+              AND (group_sync_id IS NULL OR TRIM(group_sync_id) = '');
+        )"), error)) {
+            return false;
+        }
+
+        const bool statsHasWordSyncId = tableHasColumn(db, QStringLiteral("word_review_stats"), QStringLiteral("word_sync_id"), error);
+        if (!error->isEmpty()) {
+            return false;
+        }
+        if (!statsHasWordSyncId) {
+            qCInfo(dlDb) << "Adding missing word_review_stats.word_sync_id column";
+            if (!execMigrationSql(db, QStringLiteral("ALTER TABLE word_review_stats ADD COLUMN word_sync_id TEXT;"), error)) {
+                return false;
+            }
+        }
+        if (!execMigrationSql(db, QStringLiteral(R"(
+            UPDATE word_review_stats
+            SET word_sync_id = (
+                SELECT words.sync_id
+                FROM words
+                WHERE words.id = word_review_stats.word_id
+            )
+            WHERE word_sync_id IS NULL OR TRIM(word_sync_id) = '';
+        )"), error)) {
+            return false;
         }
 
         const bool hasPraeteritum = tableHasColumn(db, QStringLiteral("verb_forms"), QStringLiteral("praeteritum_form"), error);
@@ -386,7 +655,7 @@ bool DLDatabaseManager::migrateSchemaIfNeeded()
             }
         }
 
-        return true;
+        return recordCurrentSqliteSchemaVersion(db, error);
     });
 }
 
@@ -394,7 +663,11 @@ bool DLDatabaseManager::createIndexesIfNeeded()
 {
     qCDebug(dlDb) << "Creating database indexes if needed";
     const QList<DLSqlCommand> commands = {
+        { QStringLiteral("CREATE UNIQUE INDEX IF NOT EXISTS idx_groups_sync_id ON groups(sync_id);"), {} },
+        { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_groups_deleted_at ON groups(deleted_at);"), {} },
+        { QStringLiteral("CREATE UNIQUE INDEX IF NOT EXISTS idx_words_sync_id ON words(sync_id);"), {} },
         { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_words_group_id ON words(group_id);"), {} },
+        { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_words_group_sync_id ON words(group_sync_id);"), {} },
         { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_words_normalized_german ON words(normalized_german_word);"), {} },
         { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_words_part_of_speech ON words(part_of_speech);"), {} },
         { QStringLiteral(R"(
@@ -402,7 +675,13 @@ bool DLDatabaseManager::createIndexesIfNeeded()
             ON words(normalized_german_word, normalized_native_translation)
             WHERE deleted_at IS NULL;
         )"), {} },
-        { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_word_review_stats_due_at ON word_review_stats(due_at);"), {} }
+        { QStringLiteral("CREATE UNIQUE INDEX IF NOT EXISTS idx_word_review_stats_word_sync_id ON word_review_stats(word_sync_id);"), {} },
+        { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_word_review_stats_due_at ON word_review_stats(due_at);"), {} },
+        { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_sync_outbox_events_created_at ON sync_outbox_events(created_at);"), {} },
+        { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_sync_outbox_events_next_attempt_after ON sync_outbox_events(next_attempt_after);"), {} },
+        { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_sync_outbox_events_entity ON sync_outbox_events(entity_type, entity_id);"), {} },
+        { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_sync_acknowledged_event_diagnostics_acknowledged_at ON sync_acknowledged_event_diagnostics(acknowledged_at);"), {} },
+        { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_sync_acknowledged_event_diagnostics_entity ON sync_acknowledged_event_diagnostics(entity_type, entity_id);"), {} }
     };
 
     return executeSqlBatch(commands);
@@ -644,7 +923,7 @@ QVariant DLDatabaseManager::nullVariant()
     return QVariant();
 }
 
-int DLDatabaseManager::insertGroup(const QString& name, const QString& colorHex)
+QString DLDatabaseManager::insertGroup(const QString& name, const QString& colorHex)
 {
     DLWordGroup group;
     group.name = name;
@@ -652,18 +931,18 @@ int DLDatabaseManager::insertGroup(const QString& name, const QString& colorHex)
     return DLGroupRepository(*this).insertGroup(group);
 }
 
-bool DLDatabaseManager::updateGroup(int id, const QString& name, const QString& colorHex)
+bool DLDatabaseManager::updateGroup(const QString& syncId, const QString& name, const QString& colorHex)
 {
     DLWordGroup group;
-    group.id = id;
+    group.syncId = syncId;
     group.name = name;
     group.colorHex = colorHex;
     return DLGroupRepository(*this).updateGroup(group);
 }
 
-bool DLDatabaseManager::deleteGroup(int id)
+bool DLDatabaseManager::deleteGroup(const QString& syncId)
 {
-    return DLGroupRepository(*this).deleteGroup(id);
+    return DLGroupRepository(*this).deleteGroup(syncId);
 }
 
 QVariantList DLDatabaseManager::fetchAllGroups()
@@ -671,37 +950,36 @@ QVariantList DLDatabaseManager::fetchAllGroups()
     return DLModelMappers::groupsToList(DLGroupRepository(*this).fetchAllGroups());
 }
 
-QVariantMap DLDatabaseManager::fetchGroupById(int id)
+QVariantMap DLDatabaseManager::fetchGroupById(const QString& syncId)
 {
-    const DLWordGroup group = DLGroupRepository(*this).fetchGroupById(id);
+    const DLWordGroup group = DLGroupRepository(*this).fetchGroupById(syncId);
     return group.id < 0 ? QVariantMap() : DLModelMappers::groupToMap(group);
 }
 
-int DLDatabaseManager::insertWord(const QString& germanWord,
-                                  const QString& article,
-                                  const QString& partOfSpeech,
-                                  const QString& nativeTranslation,
-                                  const QString& examplePhraseDe,
-                                  const QString& examplePhraseNative,
-                                  int groupId,
-                                  const QString& syncId,
-                                  const QString& pluralForm,
-                                  const QString& praeteritumForm,
-                                  const QString& partizipIIForm,
-                                  const QString& positiveForm,
-                                  const QString& comparativeForm,
-                                  const QString& superlativeForm)
+QString DLDatabaseManager::insertWord(const QString& germanWord,
+                                      const QString& article,
+                                      const QString& partOfSpeech,
+                                      const QString& nativeTranslation,
+                                      const QString& examplePhraseDe,
+                                      const QString& examplePhraseNative,
+                                      const QString& groupSyncId,
+                                      const QString& syncId,
+                                      const QString& pluralForm,
+                                      const QString& praeteritumForm,
+                                      const QString& partizipIIForm,
+                                      const QString& positiveForm,
+                                      const QString& comparativeForm,
+                                      const QString& superlativeForm)
 {
-    Q_UNUSED(syncId);
-
     DLWord word;
+    word.syncId = syncId;
     word.germanWord = germanWord;
     word.article = article;
     word.partOfSpeech = partOfSpeech;
     word.nativeTranslation = nativeTranslation;
     word.examplePhraseDe = examplePhraseDe;
     word.examplePhraseNative = examplePhraseNative;
-    word.groupId = groupId;
+    word.groupSyncId = groupSyncId;
     word.nounForms.pluralForm = pluralForm;
     word.verbForms.praeteritumForm = praeteritumForm;
     word.verbForms.partizipIIForm = partizipIIForm;
@@ -711,15 +989,14 @@ int DLDatabaseManager::insertWord(const QString& germanWord,
     return DLWordRepository(*this).insertWord(word);
 }
 
-bool DLDatabaseManager::updateWord(int id,
+bool DLDatabaseManager::updateWord(const QString& syncId,
                                    const QString& germanWord,
                                    const QString& article,
                                    const QString& partOfSpeech,
                                    const QString& nativeTranslation,
                                    const QString& examplePhraseDe,
                                    const QString& examplePhraseNative,
-                                   int groupId,
-                                   const QString& syncId,
+                                   const QString& groupSyncId,
                                    const QString& pluralForm,
                                    const QString& praeteritumForm,
                                    const QString& partizipIIForm,
@@ -727,17 +1004,15 @@ bool DLDatabaseManager::updateWord(int id,
                                    const QString& comparativeForm,
                                    const QString& superlativeForm)
 {
-    Q_UNUSED(syncId);
-
     DLWord word;
-    word.id = id;
+    word.syncId = syncId;
     word.germanWord = germanWord;
     word.article = article;
     word.partOfSpeech = partOfSpeech;
     word.nativeTranslation = nativeTranslation;
     word.examplePhraseDe = examplePhraseDe;
     word.examplePhraseNative = examplePhraseNative;
-    word.groupId = groupId;
+    word.groupSyncId = groupSyncId;
     word.nounForms.pluralForm = pluralForm;
     word.verbForms.praeteritumForm = praeteritumForm;
     word.verbForms.partizipIIForm = partizipIIForm;
@@ -747,60 +1022,60 @@ bool DLDatabaseManager::updateWord(int id,
     return DLWordRepository(*this).updateWord(word);
 }
 
-bool DLDatabaseManager::deleteWord(int id)
+bool DLDatabaseManager::deleteWord(const QString& syncId)
 {
-    return DLWordRepository(*this).deleteWord(id);
+    return DLWordRepository(*this).deleteWord(syncId);
 }
 
-QVariantMap DLDatabaseManager::fetchWordById(int id)
+QVariantMap DLDatabaseManager::fetchWordById(const QString& syncId)
 {
-    const DLWord word = DLWordRepository(*this).fetchWordById(id);
+    const DLWord word = DLWordRepository(*this).fetchWordById(syncId);
     return word.id < 0 ? QVariantMap() : DLModelMappers::wordToMap(word);
 }
 
-bool DLDatabaseManager::wordExists(const QString& germanWord, const QString& nativeTranslation, int excludingId)
+bool DLDatabaseManager::wordExists(const QString& germanWord, const QString& nativeTranslation, const QString& excludingSyncId)
 {
-    return DLWordRepository(*this).wordExists(germanWord, nativeTranslation, excludingId);
+    return DLWordRepository(*this).wordExists(germanWord, nativeTranslation, excludingSyncId);
 }
 
-QVariantList DLDatabaseManager::fetchAllWords(const QString& sortMode, int groupId)
+QVariantList DLDatabaseManager::fetchAllWords(const QString& sortMode, const QString& groupSyncId)
 {
-    return DLModelMappers::wordsToList(DLWordRepository(*this).fetchAllWords(sortMode, groupId));
+    return DLModelMappers::wordsToList(DLWordRepository(*this).fetchAllWords(sortMode, groupSyncId));
 }
 
-QVariantList DLDatabaseManager::searchWords(const QString& query, int groupId)
+QVariantList DLDatabaseManager::searchWords(const QString& query, const QString& groupSyncId)
 {
-    return DLModelMappers::wordsToList(DLWordRepository(*this).searchWords(query, groupId));
+    return DLModelMappers::wordsToList(DLWordRepository(*this).searchWords(query, groupSyncId));
 }
 
-QVariantList DLDatabaseManager::fetchWordsByGroup(int groupId)
+QVariantList DLDatabaseManager::fetchWordsByGroup(const QString& groupSyncId)
 {
-    return fetchAllWords(QStringLiteral("newest"), groupId);
+    return fetchAllWords(QStringLiteral("newest"), groupSyncId);
 }
 
-QVariantList DLDatabaseManager::fetchRandomWords(int limit, int groupId)
+QVariantList DLDatabaseManager::fetchRandomWords(int limit, const QString& groupSyncId)
 {
-    return DLModelMappers::wordsToList(DLQuizRepository(*this).fetchRandomWords(limit, groupId));
+    return DLModelMappers::wordsToList(DLQuizRepository(*this).fetchRandomWords(limit, groupSyncId));
 }
 
-QVariantList DLDatabaseManager::fetchTranslationQuizWords(int limit, int groupId, const QString& partOfSpeech)
+QVariantList DLDatabaseManager::fetchTranslationQuizWords(int limit, const QString& groupSyncId, const QString& partOfSpeech)
 {
-    return DLModelMappers::wordsToList(DLQuizRepository(*this).fetchTranslationQuizWords(limit, groupId, partOfSpeech));
+    return DLModelMappers::wordsToList(DLQuizRepository(*this).fetchTranslationQuizWords(limit, groupSyncId, partOfSpeech));
 }
 
-QVariantList DLDatabaseManager::fetchNouns(int groupId)
+QVariantList DLDatabaseManager::fetchNouns(const QString& groupSyncId)
 {
-    return DLModelMappers::wordsToList(DLQuizRepository(*this).fetchNouns(groupId));
+    return DLModelMappers::wordsToList(DLQuizRepository(*this).fetchNouns(groupSyncId));
 }
 
-int DLDatabaseManager::getWordCount(int groupId)
+int DLDatabaseManager::getWordCount(const QString& groupSyncId)
 {
-    return DLWordRepository(*this).getWordCount(groupId);
+    return DLWordRepository(*this).getWordCount(groupSyncId);
 }
 
-int DLDatabaseManager::getTranslationQuizWordCount(int groupId, const QString& partOfSpeech)
+int DLDatabaseManager::getTranslationQuizWordCount(const QString& groupSyncId, const QString& partOfSpeech)
 {
-    return DLQuizRepository(*this).getTranslationQuizWordCount(groupId, partOfSpeech);
+    return DLQuizRepository(*this).getTranslationQuizWordCount(groupSyncId, partOfSpeech);
 }
 
 int DLDatabaseManager::getGroupCount()
@@ -808,19 +1083,19 @@ int DLDatabaseManager::getGroupCount()
     return DLGroupRepository(*this).getGroupCount();
 }
 
-int DLDatabaseManager::getNounCount(int groupId)
+int DLDatabaseManager::getNounCount(const QString& groupSyncId)
 {
-    return DLQuizRepository(*this).getNounCount(groupId);
+    return DLQuizRepository(*this).getNounCount(groupSyncId);
 }
 
-bool DLDatabaseManager::incrementCorrectAnswer(int wordId)
+bool DLDatabaseManager::incrementCorrectAnswer(const QString& wordSyncId)
 {
-    return DLReviewStatsRepository(*this).incrementCorrectAnswer(wordId);
+    return DLReviewStatsRepository(*this).incrementCorrectAnswer(wordSyncId);
 }
 
-bool DLDatabaseManager::incrementWrongAnswer(int wordId)
+bool DLDatabaseManager::incrementWrongAnswer(const QString& wordSyncId)
 {
-    return DLReviewStatsRepository(*this).incrementWrongAnswer(wordId);
+    return DLReviewStatsRepository(*this).incrementWrongAnswer(wordSyncId);
 }
 
 QVariantMap DLDatabaseManager::getDatabaseStats()

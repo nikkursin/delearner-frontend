@@ -9,22 +9,22 @@ DLQuizRepository::DLQuizRepository(DLDatabaseManager& database)
 {
 }
 
-QList<DLWord> DLQuizRepository::fetchRandomWords(int limit, int groupId)
+QList<DLWord> DLQuizRepository::fetchRandomWords(int limit, const QString& groupSyncId)
 {
     QString sql = QStringLiteral("SELECT %1 FROM %2 WHERE w.deleted_at IS NULL")
                       .arg(DLWordRepository::wordSelectColumns(), DLWordRepository::wordFromClause());
     QVariantMap args = {{ QStringLiteral(":limit"), limit }};
 
-    if (groupId >= 0) {
-        sql += QStringLiteral(" AND w.group_id = :group_id");
-        args.insert(QStringLiteral(":group_id"), groupId);
+    if (!groupSyncId.trimmed().isEmpty()) {
+        sql += QStringLiteral(" AND w.group_sync_id = :group_sync_id");
+        args.insert(QStringLiteral(":group_sync_id"), groupSyncId.trimmed());
     }
 
     sql += QStringLiteral(" ORDER BY RANDOM() LIMIT :limit;");
     return fetchWords(sql, args);
 }
 
-QList<DLWord> DLQuizRepository::fetchTranslationQuizWords(int limit, int groupId, const QString& partOfSpeech)
+QList<DLWord> DLQuizRepository::fetchTranslationQuizWords(int limit, const QString& groupSyncId, const QString& partOfSpeech)
 {
     QString sql = QStringLiteral(R"(
         SELECT %1
@@ -41,16 +41,16 @@ QList<DLWord> DLQuizRepository::fetchTranslationQuizWords(int limit, int groupId
         args.insert(QStringLiteral(":part_of_speech"), trimmedPartOfSpeech);
     }
 
-    if (groupId >= 0) {
-        sql += QStringLiteral(" AND w.group_id = :group_id");
-        args.insert(QStringLiteral(":group_id"), groupId);
+    if (!groupSyncId.trimmed().isEmpty()) {
+        sql += QStringLiteral(" AND w.group_sync_id = :group_sync_id");
+        args.insert(QStringLiteral(":group_sync_id"), groupSyncId.trimmed());
     }
 
     sql += QStringLiteral(" ORDER BY RANDOM() LIMIT :limit;");
     return fetchWords(sql, args);
 }
 
-QList<DLWord> DLQuizRepository::fetchNouns(int groupId)
+QList<DLWord> DLQuizRepository::fetchNouns(const QString& groupSyncId)
 {
     QString sql = QStringLiteral(R"(
         SELECT %1
@@ -64,16 +64,16 @@ QList<DLWord> DLQuizRepository::fetchNouns(int groupId)
     )").arg(DLWordRepository::wordSelectColumns(), DLWordRepository::wordFromClause());
 
     QVariantMap args;
-    if (groupId >= 0) {
-        sql += QStringLiteral(" AND w.group_id = :group_id");
-        args.insert(QStringLiteral(":group_id"), groupId);
+    if (!groupSyncId.trimmed().isEmpty()) {
+        sql += QStringLiteral(" AND w.group_sync_id = :group_sync_id");
+        args.insert(QStringLiteral(":group_sync_id"), groupSyncId.trimmed());
     }
 
     sql += QStringLiteral(" ORDER BY w.created_at DESC;");
     return fetchWords(sql, args);
 }
 
-int DLQuizRepository::getNounCount(int groupId)
+int DLQuizRepository::getNounCount(const QString& groupSyncId)
 {
     QString sql = QStringLiteral(R"(
         SELECT COUNT(*)
@@ -87,15 +87,15 @@ int DLQuizRepository::getNounCount(int groupId)
     )");
     QVariantMap args;
 
-    if (groupId >= 0) {
-        sql += QStringLiteral(" AND group_id = :group_id");
-        args.insert(QStringLiteral(":group_id"), groupId);
+    if (!groupSyncId.trimmed().isEmpty()) {
+        sql += QStringLiteral(" AND group_sync_id = :group_sync_id");
+        args.insert(QStringLiteral(":group_sync_id"), groupSyncId.trimmed());
     }
 
     return m_database.selectInt(sql + QStringLiteral(";"), args);
 }
 
-int DLQuizRepository::getTranslationQuizWordCount(int groupId, const QString& partOfSpeech)
+int DLQuizRepository::getTranslationQuizWordCount(const QString& groupSyncId, const QString& partOfSpeech)
 {
     QString sql = QStringLiteral(R"(
         SELECT COUNT(*)
@@ -111,9 +111,9 @@ int DLQuizRepository::getTranslationQuizWordCount(int groupId, const QString& pa
         args.insert(QStringLiteral(":part_of_speech"), trimmedPartOfSpeech);
     }
 
-    if (groupId >= 0) {
-        sql += QStringLiteral(" AND group_id = :group_id");
-        args.insert(QStringLiteral(":group_id"), groupId);
+    if (!groupSyncId.trimmed().isEmpty()) {
+        sql += QStringLiteral(" AND group_sync_id = :group_sync_id");
+        args.insert(QStringLiteral(":group_sync_id"), groupSyncId.trimmed());
     }
 
     return m_database.selectInt(sql + QStringLiteral(";"), args);

@@ -114,8 +114,8 @@ App {
               id: addEditWordPage
 
               DLAddEditWordPage {
-                  editMode: appStateManager.selectedWordId > 0
-                  wordId: appStateManager.selectedWordId > 0 ? appStateManager.selectedWordId.toString() : ""
+                  editMode: appStateManager.selectedWordId.length > 0
+                  wordId: appStateManager.selectedWordId
               }
        }
 

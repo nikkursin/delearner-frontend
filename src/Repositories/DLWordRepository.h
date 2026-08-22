@@ -16,14 +16,14 @@ class DLWordRepository
 public:
     explicit DLWordRepository(DLDatabaseManager& database);
 
-    int insertWord(const DLWord& word);
+    QString insertWord(const DLWord& word);
     bool updateWord(const DLWord& word);
-    bool deleteWord(int id);
-    DLWord fetchWordById(int id);
-    QList<DLWord> fetchAllWords(const QString& sortMode = QStringLiteral("newest"), int groupId = -1);
-    QList<DLWord> searchWords(const QString& query, int groupId = -1);
-    bool wordExists(const QString& germanWord, const QString& nativeTranslation, int excludingId = -1);
-    int getWordCount(int groupId = -1);
+    bool deleteWord(const QString& syncId);
+    DLWord fetchWordById(const QString& syncId);
+    QList<DLWord> fetchAllWords(const QString& sortMode = QStringLiteral("newest"), const QString& groupSyncId = QString());
+    QList<DLWord> searchWords(const QString& query, const QString& groupSyncId = QString());
+    bool wordExists(const QString& germanWord, const QString& nativeTranslation, const QString& excludingSyncId = QString());
+    int getWordCount(const QString& groupSyncId = QString());
 
     static QString wordSelectColumns();
     static QString wordFromClause();
@@ -31,6 +31,8 @@ public:
 private:
     QString sortClause(const QString& sortMode) const;
     QList<DLWord> fetchWords(const QString& sql, const QVariantMap& args);
+    int localWordIdForSyncId(QSqlDatabase& db, QString* error, const QString& syncId);
+    int localGroupIdForSyncId(QSqlDatabase& db, QString* error, const QString& syncId);
     bool saveForms(QSqlDatabase& db, QString* error, int wordId, const DLWord& word);
     bool createPhraseFromExample(QSqlDatabase& db, QString* error, const DLWord& word);
     bool bindAndExec(QSqlQuery& query, QString* error);

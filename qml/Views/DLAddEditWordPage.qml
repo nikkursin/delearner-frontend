@@ -11,8 +11,8 @@ DLAppPage {
     property bool editMode: false
     property string wordId: ""
 
-    property var groupOptions: [{ id: -1, name: "No group" }]
-    property int selectedGroupId: -1
+    property var groupOptions: [{ id: "", name: "No group" }]
+    property string selectedGroupId: ""
     property string selectedArticle: ""
     property string selectedPartOfSpeech: "Nomen"
     property string errorMessage: ""
@@ -49,7 +49,7 @@ DLAppPage {
 
     function loadGroups() {
         var groups = appStateManager.availableGroups()
-        var options = [{ id: -1, name: "No group" }]
+        var options = [{ id: "", name: "No group" }]
 
         for (var i = 0; i < groups.length; ++i) {
             options.push({
@@ -63,8 +63,8 @@ DLAppPage {
     }
 
     function loadWord() {
-        var id = parseInt(wordId)
-        if (!id || id <= 0) {
+        var id = wordId.trim()
+        if (id.length === 0) {
             errorMessage = "Unable to load this word."
             return
         }
@@ -79,7 +79,7 @@ DLAppPage {
         translationField.text = word.native_translation || ""
         selectedArticle = word.article || ""
         selectedPartOfSpeech = normalizedPartOfSpeech(word.part_of_speech || "Nomen")
-        selectedGroupId = word.group_id === undefined || word.group_id === null ? -1 : word.group_id
+        selectedGroupId = word.group_id === undefined || word.group_id === null ? "" : word.group_id
         pluralFormField.text = word.plural_form || word.pluralForm || ""
         praeteritumFormField.text = word.praeteritum_form || word.praeteritumForm || ""
         partizipIIFormField.text = word.partizip_ii_form || word.partizipIIForm || ""
@@ -147,7 +147,7 @@ DLAppPage {
     }
 
     function selectGroup(groupId) {
-        selectedGroupId = groupId === undefined || groupId === null ? -1 : groupId
+        selectedGroupId = groupId === undefined || groupId === null ? "" : groupId
 
         for (var i = 0; i < groupOptions.length; ++i) {
             if (groupOptions[i].id === selectedGroupId) {
@@ -156,7 +156,7 @@ DLAppPage {
             }
         }
 
-        selectedGroupId = -1
+        selectedGroupId = ""
         groupCombo.currentIndex = 0
     }
 
@@ -186,7 +186,7 @@ DLAppPage {
             native_translation: translationField.text.trim(),
             article: selectedPartOfSpeech === "Nomen" ? selectedArticle : "",
             part_of_speech: selectedPartOfSpeech,
-            group_id: selectedGroupId >= 0 ? selectedGroupId : null,
+            group_id: selectedGroupId.length > 0 ? selectedGroupId : null,
             plural_form: selectedPartOfSpeech === "Nomen" ? pluralFormField.text.trim() : "",
             praeteritum_form: selectedPartOfSpeech === "Verb" ? praeteritumFormField.text.trim() : "",
             partizip_ii_form: selectedPartOfSpeech === "Verb" ? partizipIIFormField.text.trim() : "",
@@ -205,8 +205,8 @@ DLAppPage {
         }
 
         if (editMode) {
-            var existingId = parseInt(wordId)
-            if (!existingId || existingId <= 0) {
+            var existingId = wordId.trim()
+            if (existingId.length === 0) {
                 errorMessage = "Unable to save this word."
                 return
             }
@@ -217,7 +217,7 @@ DLAppPage {
             }
         } else {
             var newId = appStateManager.createWord(wordPayload())
-            if (newId < 0) {
+            if (newId.length === 0) {
                 errorMessage = appStateManager.lastError || "Unable to save this word."
                 return
             }

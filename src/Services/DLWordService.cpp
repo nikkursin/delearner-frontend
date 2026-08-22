@@ -10,16 +10,16 @@ DLWordService::DLWordService(DLDatabaseManager& database)
 {
 }
 
-int DLWordService::createWord(const QVariantMap& wordData)
+QString DLWordService::createWord(const QVariantMap& wordData)
 {
-    const int newId = m_database.insertWord(
+    const QString newId = m_database.insertWord(
         trimmedStringValue(wordData, QStringLiteral("german_word")),
         trimmedStringValue(wordData, QStringLiteral("article")),
         trimmedStringValue(wordData, QStringLiteral("part_of_speech")),
         trimmedStringValue(wordData, QStringLiteral("native_translation")),
         trimmedStringValue(wordData, QStringLiteral("example_phrase_de")),
         trimmedStringValue(wordData, QStringLiteral("example_phrase_native")),
-        groupIdFromWordData(wordData),
+        groupSyncIdFromWordData(wordData),
         trimmedStringValue(wordData, QStringLiteral("sync_id")),
         trimmedStringValue(wordData, QStringLiteral("plural_form")),
         trimmedStringValue(wordData, QStringLiteral("praeteritum_form")),
@@ -28,28 +28,27 @@ int DLWordService::createWord(const QVariantMap& wordData)
         trimmedStringValue(wordData, QStringLiteral("comparative_form")),
         trimmedStringValue(wordData, QStringLiteral("superlative_form")));
 
-    m_lastError = newId < 0 ? m_database.lastError() : QString();
+    m_lastError = newId.isEmpty() ? m_database.lastError() : QString();
     return newId;
 }
 
-bool DLWordService::updateWord(int id, const QVariantMap& wordData)
+bool DLWordService::updateWord(const QString& syncId, const QVariantMap& wordData)
 {
-    if (id <= 0) {
+    if (syncId.trimmed().isEmpty()) {
         m_lastError = QStringLiteral("Invalid word id.");
         qCWarning(dlService) << "Rejected word update: invalid id";
         return false;
     }
 
     const bool success = m_database.updateWord(
-        id,
+        syncId.trimmed(),
         trimmedStringValue(wordData, QStringLiteral("german_word")),
         trimmedStringValue(wordData, QStringLiteral("article")),
         trimmedStringValue(wordData, QStringLiteral("part_of_speech")),
         trimmedStringValue(wordData, QStringLiteral("native_translation")),
         trimmedStringValue(wordData, QStringLiteral("example_phrase_de")),
         trimmedStringValue(wordData, QStringLiteral("example_phrase_native")),
-        groupIdFromWordData(wordData),
-        trimmedStringValue(wordData, QStringLiteral("sync_id")),
+        groupSyncIdFromWordData(wordData),
         trimmedStringValue(wordData, QStringLiteral("plural_form")),
         trimmedStringValue(wordData, QStringLiteral("praeteritum_form")),
         trimmedStringValue(wordData, QStringLiteral("partizip_ii_form")),
@@ -61,53 +60,53 @@ bool DLWordService::updateWord(int id, const QVariantMap& wordData)
     return success;
 }
 
-bool DLWordService::deleteWord(int id)
+bool DLWordService::deleteWord(const QString& syncId)
 {
-    if (id <= 0) {
+    if (syncId.trimmed().isEmpty()) {
         m_lastError = QStringLiteral("Invalid word id.");
         qCWarning(dlService) << "Rejected word delete: invalid id";
         return false;
     }
 
-    const bool success = m_database.deleteWord(id);
+    const bool success = m_database.deleteWord(syncId.trimmed());
     m_lastError = success ? QString() : m_database.lastError();
     return success;
 }
 
-QVariantMap DLWordService::wordById(int id)
+QVariantMap DLWordService::wordById(const QString& syncId)
 {
-    if (id <= 0) {
+    if (syncId.trimmed().isEmpty()) {
         m_lastError = QStringLiteral("Invalid word id.");
         qCWarning(dlService) << "Rejected word lookup: invalid id";
         return {};
     }
 
-    const QVariantMap word = m_database.fetchWordById(id);
+    const QVariantMap word = m_database.fetchWordById(syncId.trimmed());
     m_lastError = word.isEmpty() ? QStringLiteral("Word not found.") : QString();
     return word;
 }
 
-QVariantList DLWordService::loadWords(const QString& sortMode, int groupId)
+QVariantList DLWordService::loadWords(const QString& sortMode, const QString& groupSyncId)
 {
     m_lastError.clear();
-    return m_database.fetchAllWords(sortMode, groupId);
+    return m_database.fetchAllWords(sortMode, groupSyncId);
 }
 
-QVariantList DLWordService::searchWords(const QString& query, const QString& sortMode, int groupId)
+QVariantList DLWordService::searchWords(const QString& query, const QString& sortMode, const QString& groupSyncId)
 {
     const QString trimmedQuery = query.trimmed();
     if (trimmedQuery.isEmpty()) {
-        return loadWords(sortMode, groupId);
+        return loadWords(sortMode, groupSyncId);
     }
 
     m_lastError.clear();
-    return sortedWords(m_database.searchWords(trimmedQuery, groupId), sortMode);
+    return sortedWords(m_database.searchWords(trimmedQuery, groupSyncId), sortMode);
 }
 
-int DLWordService::wordCount(int groupId)
+int DLWordService::wordCount(const QString& groupSyncId)
 {
     m_lastError.clear();
-    return m_database.getWordCount(groupId);
+    return m_database.getWordCount(groupSyncId);
 }
 
 QString DLWordService::lastError() const
@@ -134,16 +133,14 @@ QString DLWordService::trimmedStringValue(const QVariantMap& wordData, const QSt
     return wordData.value(key).toString().trimmed();
 }
 
-int DLWordService::groupIdFromWordData(const QVariantMap& wordData) const
+QString DLWordService::groupSyncIdFromWordData(const QVariantMap& wordData) const
 {
     const QVariant value = wordData.value(QStringLiteral("group_id"));
     if (!value.isValid() || value.isNull()) {
-        return -1;
+        return {};
     }
 
-    bool ok = false;
-    const int groupId = value.toInt(&ok);
-    return ok && groupId >= 0 ? groupId : -1;
+    return value.toString().trimmed();
 }
 
 QVariantList DLWordService::sortedWords(const QVariantList& words, const QString& sortMode) const
