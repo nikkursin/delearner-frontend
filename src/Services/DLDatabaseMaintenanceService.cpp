@@ -184,6 +184,7 @@ bool DLDatabaseMaintenanceService::deleteAllData()
 {
     qCInfo(dlDb) << "Deleting all database data";
     const QList<DLSqlCommand> commands = {
+        { QStringLiteral("DELETE FROM sync_pull_cursor;"), {} },
         { QStringLiteral("DELETE FROM sync_acknowledged_event_diagnostics;"), {} },
         { QStringLiteral("DELETE FROM sync_outbox_events;"), {} },
         { QStringLiteral("DELETE FROM adjective_forms;"), {} },

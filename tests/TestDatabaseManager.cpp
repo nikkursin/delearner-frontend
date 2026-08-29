@@ -23,6 +23,8 @@ private slots:
     void openDatabaseRecordsSqliteSchemaVersion();
     void cleanDatabaseCreatesUuidIdentityColumns();
     void cleanDatabaseCreatesSyncOutboxSchema();
+    void cleanDatabaseCreatesSyncPullCursorSchema();
+    void remoteCursorAdvancementPersistsAndDoesNotRegress();
     void insertsPopulateUuidIdentities();
     void closeDatabaseClosesSafely();
     void lastErrorIsSetWhenOperationFails();
@@ -103,7 +105,8 @@ void TestDatabaseManager::createTablesIfNeededCreatesRequiredTables()
         QStringLiteral("verb_forms"),
         QStringLiteral("adjective_forms"),
         QStringLiteral("sync_outbox_events"),
-        QStringLiteral("sync_acknowledged_event_diagnostics")
+        QStringLiteral("sync_acknowledged_event_diagnostics"),
+        QStringLiteral("sync_pull_cursor")
     };
 
     for (const QString& tableName : tables) {
@@ -144,8 +147,8 @@ void TestDatabaseManager::openDatabaseRecordsSqliteSchemaVersion()
     const QVariantMap row = DLDatabaseManager::instance().selectOneRow(
         QStringLiteral("SELECT major, minor FROM schema_version WHERE component = 'sqlite';"));
     QCOMPARE(row.value(QStringLiteral("major")).toInt(), 1);
-    QCOMPARE(row.value(QStringLiteral("minor")).toInt(), 1);
-    QCOMPARE(DLDatabaseManager::instance().selectInt(QStringLiteral("PRAGMA user_version;")), 1001);
+    QCOMPARE(row.value(QStringLiteral("minor")).toInt(), 2);
+    QCOMPARE(DLDatabaseManager::instance().selectInt(QStringLiteral("PRAGMA user_version;")), 1002);
 }
 
 void TestDatabaseManager::cleanDatabaseCreatesUuidIdentityColumns()
@@ -199,6 +202,38 @@ void TestDatabaseManager::cleanDatabaseCreatesSyncOutboxSchema()
         QVERIFY2(columnExists(QStringLiteral("sync_acknowledged_event_diagnostics"), columnName),
                  qPrintable(QStringLiteral("Missing sync_acknowledged_event_diagnostics.%1").arg(columnName)));
     }
+}
+
+void TestDatabaseManager::cleanDatabaseCreatesSyncPullCursorSchema()
+{
+    const QStringList cursorColumns = {
+        QStringLiteral("id"),
+        QStringLiteral("consumed_sequence"),
+        QStringLiteral("updated_at")
+    };
+
+    for (const QString& columnName : cursorColumns) {
+        QVERIFY2(columnExists(QStringLiteral("sync_pull_cursor"), columnName),
+                 qPrintable(QStringLiteral("Missing sync_pull_cursor.%1").arg(columnName)));
+    }
+
+    QCOMPARE(DLDatabaseManager::instance().remoteCursor(), qint64(0));
+}
+
+void TestDatabaseManager::remoteCursorAdvancementPersistsAndDoesNotRegress()
+{
+    QVERIFY2(DLDatabaseManager::instance().advanceRemoteCursor(42),
+             qPrintable(DLDatabaseManager::instance().lastError()));
+    QCOMPARE(DLDatabaseManager::instance().remoteCursor(), qint64(42));
+
+    QVERIFY2(DLDatabaseManager::instance().advanceRemoteCursor(7),
+             qPrintable(DLDatabaseManager::instance().lastError()));
+    QCOMPARE(DLDatabaseManager::instance().remoteCursor(), qint64(42));
+
+    DLDatabaseManager::instance().closeDatabase();
+    QVERIFY2(DLDatabaseManager::instance().openDatabase(m_dbPath),
+             qPrintable(DLDatabaseManager::instance().lastError()));
+    QCOMPARE(DLDatabaseManager::instance().remoteCursor(), qint64(42));
 }
 
 void TestDatabaseManager::insertsPopulateUuidIdentities()
@@ -376,7 +411,8 @@ void TestDatabaseManager::openDatabaseMigratesLegacySchema()
     QCOMPARE(word.value(QStringLiteral("partizip_ii_form")).toString(), QStringLiteral("gegangen"));
     QVERIFY(tableExists(QStringLiteral("sync_outbox_events")));
     QVERIFY(tableExists(QStringLiteral("sync_acknowledged_event_diagnostics")));
-    QCOMPARE(DLDatabaseManager::instance().selectInt(QStringLiteral("PRAGMA user_version;")), 1001);
+    QVERIFY(tableExists(QStringLiteral("sync_pull_cursor")));
+    QCOMPARE(DLDatabaseManager::instance().selectInt(QStringLiteral("PRAGMA user_version;")), 1002);
 }
 
 void TestDatabaseManager::deleteAllDataRemovesStoredData()
@@ -419,6 +455,8 @@ void TestDatabaseManager::deleteAllDataRemovesStoredData()
             { QStringLiteral(":entity_id"), wordId }
         }),
         qPrintable(DLDatabaseManager::instance().lastError()));
+    QVERIFY2(DLDatabaseManager::instance().advanceRemoteCursor(42),
+             qPrintable(DLDatabaseManager::instance().lastError()));
 
     QVERIFY2(DLDatabaseManager::instance().deleteAllData(),
              qPrintable(DLDatabaseManager::instance().lastError()));
@@ -427,6 +465,7 @@ void TestDatabaseManager::deleteAllDataRemovesStoredData()
     QCOMPARE(DLDatabaseManager::instance().selectInt(QStringLiteral("SELECT COUNT(*) FROM word_review_stats;")), 0);
     QCOMPARE(DLDatabaseManager::instance().selectInt(QStringLiteral("SELECT COUNT(*) FROM sync_outbox_events;")), 0);
     QCOMPARE(DLDatabaseManager::instance().selectInt(QStringLiteral("SELECT COUNT(*) FROM sync_acknowledged_event_diagnostics;")), 0);
+    QCOMPARE(DLDatabaseManager::instance().remoteCursor(), qint64(0));
 }
 
 QTEST_MAIN(TestDatabaseManager)

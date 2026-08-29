@@ -19,7 +19,7 @@
 
 namespace {
 constexpr int kSqliteSchemaMajor = 1;
-constexpr int kSqliteSchemaMinor = 1;
+constexpr int kSqliteSchemaMinor = 2;
 constexpr int kSqliteUserVersion = kSqliteSchemaMajor * 1000 + kSqliteSchemaMinor;
 
 QStringList argumentKeys(const QVariantMap& args)
@@ -440,6 +440,13 @@ bool DLDatabaseManager::createTablesIfNeeded()
                 canonical_result_json TEXT,
                 diagnostic_json TEXT
             );
+        )"), {} },
+        { QStringLiteral(R"(
+            CREATE TABLE IF NOT EXISTS sync_pull_cursor (
+                id INTEGER PRIMARY KEY CHECK(id = 1),
+                consumed_sequence INTEGER NOT NULL DEFAULT 0 CHECK(consumed_sequence >= 0),
+                updated_at INTEGER NOT NULL
+            );
         )"), {} }
     };
 
@@ -494,6 +501,13 @@ bool DLDatabaseManager::migrateSchemaIfNeeded()
                     server_sequence INTEGER,
                     canonical_result_json TEXT,
                     diagnostic_json TEXT
+                );
+            )"), error)
+            || !execMigrationSql(db, QStringLiteral(R"(
+                CREATE TABLE IF NOT EXISTS sync_pull_cursor (
+                    id INTEGER PRIMARY KEY CHECK(id = 1),
+                    consumed_sequence INTEGER NOT NULL DEFAULT 0 CHECK(consumed_sequence >= 0),
+                    updated_at INTEGER NOT NULL
                 );
             )"), error)) {
             return false;
@@ -1103,6 +1117,42 @@ bool DLDatabaseManager::purgeAcknowledgedSyncEventDiagnostics(int maxEventsToKee
     }
 
     return true;
+}
+
+qint64 DLDatabaseManager::remoteCursor()
+{
+    const QVariantMap row = selectOneRow(QStringLiteral(
+        "SELECT consumed_sequence FROM sync_pull_cursor WHERE id = 1;"));
+    return row.isEmpty() ? 0 : row.value(QStringLiteral("consumed_sequence")).toLongLong();
+}
+
+bool DLDatabaseManager::advanceRemoteCursor(qint64 consumedSequence)
+{
+    if (consumedSequence < 0) {
+        setLastError(QStringLiteral("Remote cursor must be non-negative."));
+        return false;
+    }
+
+    return transaction([&](QSqlDatabase& db, QString* error) {
+        QSqlQuery query(db);
+        query.prepare(QStringLiteral(R"(
+            INSERT INTO sync_pull_cursor (id, consumed_sequence, updated_at)
+            VALUES (1, :consumed_sequence, :updated_at)
+            ON CONFLICT(id) DO UPDATE SET
+                consumed_sequence = MAX(sync_pull_cursor.consumed_sequence, excluded.consumed_sequence),
+                updated_at = excluded.updated_at;
+        )"));
+        query.bindValue(QStringLiteral(":consumed_sequence"), consumedSequence);
+        query.bindValue(QStringLiteral(":updated_at"), DLDatabaseManager::currentUnixTime());
+        if (!query.exec()) {
+            if (error) {
+                *error = query.lastError().text();
+            }
+            logSqlFailure("syncPullCursor/advance", query.lastQuery(), {}, {}, {}, query.lastError());
+            return false;
+        }
+        return true;
+    });
 }
 
 void DLDatabaseManager::failAfterNextSyncOutboxWriteForTesting()

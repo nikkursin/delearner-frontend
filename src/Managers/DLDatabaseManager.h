@@ -62,6 +62,8 @@ public:
                                     const QString& diagnosticJson = QString());
     bool purgeAcknowledgedSyncEventDiagnostics(int maxEventsToKeep,
                                                qint64 acknowledgedBefore = 0);
+    qint64 remoteCursor();
+    bool advanceRemoteCursor(qint64 consumedSequence);
     void failAfterNextSyncOutboxWriteForTesting();
 
     static qint64 currentUnixTime();

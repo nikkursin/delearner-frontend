@@ -16,8 +16,14 @@ public:
 
     bool applyRemoteEvent(const DLSyncEventEnvelope& event, QString* error = nullptr);
     bool applyRemoteEvents(const QList<DLSyncEventEnvelope>& events, QString* error = nullptr);
+    bool applyRemoteEventsAndAdvanceCursor(const QList<DLSyncEventEnvelope>& events,
+                                           qint64 consumedSequence,
+                                           QString* error = nullptr);
 
 private:
+    bool applyRemoteEventInTransaction(QSqlDatabase& db, const DLSyncEventEnvelope& event, QString* error);
+    bool recordRemoteCursor(QSqlDatabase& db, qint64 consumedSequence, QString* error);
+
     bool applyPayloadEvent(QSqlDatabase& db, const DLSyncEventEnvelope& event, QString* error);
     bool applyTombstoneEvent(QSqlDatabase& db, const DLSyncEventEnvelope& event, QString* error);
 

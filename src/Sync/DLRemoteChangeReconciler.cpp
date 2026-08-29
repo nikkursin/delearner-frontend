@@ -234,15 +234,57 @@ DLRemoteChangeReconciler::DLRemoteChangeReconciler(DLDatabaseManager& database)
 
 bool DLRemoteChangeReconciler::applyRemoteEvents(const QList<DLSyncEventEnvelope>& events, QString* error)
 {
-    for (const DLSyncEventEnvelope& event : events) {
-        if (!applyRemoteEvent(event, error)) {
-            return false;
+    const bool success = m_database.transaction([&](QSqlDatabase& db, QString* transactionError) {
+        for (const DLSyncEventEnvelope& event : events) {
+            if (!applyRemoteEventInTransaction(db, event, transactionError)) {
+                return false;
+            }
         }
+        return true;
+    });
+    if (!success) {
+        setError(error, m_database.lastError());
     }
-    return true;
+    return success;
 }
 
 bool DLRemoteChangeReconciler::applyRemoteEvent(const DLSyncEventEnvelope& event, QString* error)
+{
+    const bool success = m_database.transaction([&](QSqlDatabase& db, QString* transactionError) {
+        return applyRemoteEventInTransaction(db, event, transactionError);
+    });
+    if (!success) {
+        setError(error, m_database.lastError());
+    }
+    return success;
+}
+
+bool DLRemoteChangeReconciler::applyRemoteEventsAndAdvanceCursor(const QList<DLSyncEventEnvelope>& events,
+                                                                 qint64 consumedSequence,
+                                                                 QString* error)
+{
+    if (consumedSequence < 0) {
+        setError(error, QStringLiteral("Remote cursor must be non-negative."));
+        return false;
+    }
+
+    const bool success = m_database.transaction([&](QSqlDatabase& db, QString* transactionError) {
+        for (const DLSyncEventEnvelope& event : events) {
+            if (!applyRemoteEventInTransaction(db, event, transactionError)) {
+                return false;
+            }
+        }
+        return recordRemoteCursor(db, consumedSequence, transactionError);
+    });
+    if (!success) {
+        setError(error, m_database.lastError());
+    }
+    return success;
+}
+
+bool DLRemoteChangeReconciler::applyRemoteEventInTransaction(QSqlDatabase& db,
+                                                            const DLSyncEventEnvelope& event,
+                                                            QString* error)
 {
     QString validationError;
     if (!DLSyncEventSerializer::validateEvent(event, &validationError)) {
@@ -250,16 +292,25 @@ bool DLRemoteChangeReconciler::applyRemoteEvent(const DLSyncEventEnvelope& event
         return false;
     }
 
-    const bool success = m_database.transaction([&](QSqlDatabase& db, QString* transactionError) {
-        if (event.operation == QStringLiteral("delete")) {
-            return applyTombstoneEvent(db, event, transactionError);
-        }
-        return applyPayloadEvent(db, event, transactionError);
-    });
-    if (!success) {
-        setError(error, m_database.lastError());
+    if (event.operation == QStringLiteral("delete")) {
+        return applyTombstoneEvent(db, event, error);
     }
-    return success;
+    return applyPayloadEvent(db, event, error);
+}
+
+bool DLRemoteChangeReconciler::recordRemoteCursor(QSqlDatabase& db, qint64 consumedSequence, QString* error)
+{
+    QSqlQuery query(db);
+    query.prepare(QStringLiteral(R"(
+        INSERT INTO sync_pull_cursor (id, consumed_sequence, updated_at)
+        VALUES (1, :consumed_sequence, :updated_at)
+        ON CONFLICT(id) DO UPDATE SET
+            consumed_sequence = MAX(sync_pull_cursor.consumed_sequence, excluded.consumed_sequence),
+            updated_at = excluded.updated_at;
+    )"));
+    query.bindValue(QStringLiteral(":consumed_sequence"), consumedSequence);
+    query.bindValue(QStringLiteral(":updated_at"), DLDatabaseManager::currentUnixTime());
+    return execQuery(query, error);
 }
 
 bool DLRemoteChangeReconciler::applyPayloadEvent(QSqlDatabase& db, const DLSyncEventEnvelope& event, QString* error)

@@ -23,6 +23,7 @@ private slots:
     void remoteGroupAndWordPayloadsApplyWithoutOutboxFeedback();
     void remoteGroupDeleteTombstonesGroupAndUnlinksWordsWithoutOutboxFeedback();
     void remoteReviewStatsPayloadReconcilesWithoutOutboxFeedback();
+    void cursorAdvancesOnlyAfterWholeRemoteBatchApplies();
 
 private:
     QString m_dbPath;
@@ -226,6 +227,60 @@ void TestRemoteChangeReconciler::remoteReviewStatsPayloadReconcilesWithoutOutbox
     QCOMPARE(stats.wrongAnswers, 2);
     QCOMPARE(stats.lastReviewedAt.toLongLong(), isoSeconds(reviewedAt));
     QCOMPARE(stats.intervalDays, 4);
+}
+
+void TestRemoteChangeReconciler::cursorAdvancesOnlyAfterWholeRemoteBatchApplies()
+{
+    const QString groupId = QStringLiteral("0b2cfd59-d17f-4772-9de0-7db26005f507");
+    const QString wordId = QStringLiteral("471e206c-9c4f-4212-ae90-e90a2ee04ce4");
+    const QString missingGroupId = QStringLiteral("848f84f6-aef0-463c-9087-08046262e9d2");
+    const QString updatedAt = QStringLiteral("2026-01-16T10:15:00Z");
+
+    DLRemoteChangeReconciler reconciler(DLDatabaseManager::instance());
+    QString error;
+    const QList<DLSyncEventEnvelope> interruptedBatch = {
+        groupPayloadEvent(groupId, QStringLiteral("Travel"), QStringLiteral("#2F80ED"), updatedAt),
+        wordPayloadEvent(wordId, missingGroupId, QStringLiteral("train ticket"), updatedAt)
+    };
+
+    QVERIFY(!reconciler.applyRemoteEventsAndAdvanceCursor(interruptedBatch, 42, &error));
+    QVERIFY2(error.contains(QStringLiteral("Referenced remote group does not exist locally")),
+             qPrintable(error));
+    QCOMPARE(DLDatabaseManager::instance().remoteCursor(), qint64(0));
+    QCOMPARE(DLDatabaseManager::instance().selectInt(
+                 QStringLiteral("SELECT COUNT(*) FROM groups WHERE sync_id = :sync_id;"),
+                 {{ QStringLiteral(":sync_id"), groupId }}),
+             0);
+    QCOMPARE(DLDatabaseManager::instance().selectInt(
+                 QStringLiteral("SELECT COUNT(*) FROM words WHERE sync_id = :sync_id;"),
+                 {{ QStringLiteral(":sync_id"), wordId }}),
+             0);
+
+    error.clear();
+    const QList<DLSyncEventEnvelope> replayBatch = {
+        groupPayloadEvent(groupId, QStringLiteral("Travel"), QStringLiteral("#2F80ED"), updatedAt),
+        wordPayloadEvent(wordId, groupId, QStringLiteral("train ticket"), updatedAt)
+    };
+    QVERIFY2(reconciler.applyRemoteEventsAndAdvanceCursor(replayBatch, 42, &error),
+             qPrintable(error));
+    QCOMPARE(DLDatabaseManager::instance().remoteCursor(), qint64(42));
+
+    QVERIFY2(reconciler.applyRemoteEventsAndAdvanceCursor(replayBatch, 42, &error),
+             qPrintable(error));
+    QCOMPARE(DLDatabaseManager::instance().remoteCursor(), qint64(42));
+    QCOMPARE(DLDatabaseManager::instance().selectInt(
+                 QStringLiteral("SELECT COUNT(*) FROM groups WHERE sync_id = :sync_id;"),
+                 {{ QStringLiteral(":sync_id"), groupId }}),
+             1);
+    QCOMPARE(DLDatabaseManager::instance().selectInt(
+                 QStringLiteral("SELECT COUNT(*) FROM words WHERE sync_id = :sync_id;"),
+                 {{ QStringLiteral(":sync_id"), wordId }}),
+             1);
+    QCOMPARE(DLDatabaseManager::instance().selectInt(
+                 QStringLiteral("SELECT COUNT(*) FROM word_review_stats WHERE word_sync_id = :word_sync_id;"),
+                 {{ QStringLiteral(":word_sync_id"), wordId }}),
+             1);
+    QCOMPARE(DLDatabaseManager::instance().selectInt(QStringLiteral("SELECT COUNT(*) FROM sync_outbox_events;")), 0);
 }
 
 QTEST_MAIN(TestRemoteChangeReconciler)
