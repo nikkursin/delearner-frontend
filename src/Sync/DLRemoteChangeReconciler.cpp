@@ -1,6 +1,7 @@
 #include "DLRemoteChangeReconciler.h"
 
 #include <QDateTime>
+#include <QMetaType>
 #include <QSqlDatabase>
 #include <QSqlError>
 #include <QSqlQuery>
@@ -108,6 +109,80 @@ bool tombstoneIdentityMatchesEvent(const DLSyncEventEnvelope& event, QString* er
         setError(error, QStringLiteral("Remote sync tombstone identity does not match event identity."));
         return false;
     }
+    return true;
+}
+
+bool nonNegativeSequence(const QVariant& value, const QString& fieldName, qint64* sequence, QString* error)
+{
+    bool ok = false;
+    const qint64 parsed = value.toLongLong(&ok);
+    if (!ok || parsed < 0) {
+        setError(error, QStringLiteral("Remote download response has an invalid sequence field: %1").arg(fieldName));
+        return false;
+    }
+
+    *sequence = parsed;
+    return true;
+}
+
+bool requiredMap(const QVariant& value, const QString& fieldName, QVariantMap* map, QString* error)
+{
+    if (value.metaType().id() != QMetaType::QVariantMap) {
+        setError(error, QStringLiteral("Remote download event field is not an object: %1").arg(fieldName));
+        return false;
+    }
+
+    *map = value.toMap();
+    return true;
+}
+
+QVariant payloadUpdatedAt(const QVariantMap& payload)
+{
+    const QVariant updatedAt = payload.value(QStringLiteral("updated_at"));
+    return updatedAt.isValid() && !updatedAt.toString().trimmed().isEmpty()
+        ? updatedAt
+        : payload.value(QStringLiteral("created_at"));
+}
+
+QVariant tombstoneUpdatedAt(const QVariantMap& tombstone)
+{
+    const QVariant updatedAt = tombstone.value(QStringLiteral("updatedAt"));
+    return updatedAt.isValid() && !updatedAt.toString().trimmed().isEmpty()
+        ? updatedAt
+        : tombstone.value(QStringLiteral("deletedAt"));
+}
+
+bool eventFromDownloadMap(const QVariantMap& map, DLSyncEventEnvelope* event, QString* error)
+{
+    DLSyncEventEnvelope parsed;
+    parsed.contractVersion = DLSyncEventSerializer::contractVersion();
+    parsed.eventId = requiredString(map, QStringLiteral("eventId"));
+    parsed.deviceId = requiredString(map, QStringLiteral("deviceId"));
+    parsed.entityType = requiredString(map, QStringLiteral("entityType"));
+    parsed.entityId = requiredString(map, QStringLiteral("entityId"));
+    parsed.operation = requiredString(map, QStringLiteral("operation"));
+
+    if (parsed.operation == QStringLiteral("delete")) {
+        if (!requiredMap(map.value(QStringLiteral("tombstone")), QStringLiteral("tombstone"), &parsed.tombstone, error)) {
+            return false;
+        }
+        parsed.updatedAt = tombstoneUpdatedAt(parsed.tombstone);
+        parsed.authenticatedUserId = requiredString(parsed.tombstone, QStringLiteral("ownerUserId"));
+    } else {
+        if (!requiredMap(map.value(QStringLiteral("payload")), QStringLiteral("payload"), &parsed.payload, error)) {
+            return false;
+        }
+        parsed.updatedAt = payloadUpdatedAt(parsed.payload);
+        parsed.authenticatedUserId = requiredString(parsed.payload, QStringLiteral("ownerUserId"));
+    }
+
+    QString validationError;
+    if (!DLSyncEventSerializer::validateEvent(parsed, &validationError)) {
+        setError(error, validationError);
+        return false;
+    }
+
+    *event = parsed;
     return true;
 }
 
@@ -281,6 +356,60 @@ bool DLRemoteChangeReconciler::applyRemoteEventsAndAdvanceCursor(const QList<DLS
         setError(error, m_database.lastError());
     }
     return success;
+}
+
+bool DLRemoteChangeReconciler::applyDownloadedEventsAndAdvanceCursor(const QVariantMap& downloadResponse,
+                                                                     QString* error)
+{
+    if (downloadResponse.value(QStringLiteral("rebootstrapRequired")).toBool()
+        || downloadResponse.value(QStringLiteral("cursorGapDetected")).toBool()) {
+        setError(error, QStringLiteral("Remote cursor is stale; re-bootstrap is required."));
+        return false;
+    }
+
+    qint64 nextSequence = 0;
+    if (!nonNegativeSequence(downloadResponse.value(QStringLiteral("nextSequence")),
+                             QStringLiteral("nextSequence"),
+                             &nextSequence,
+                             error)) {
+        return false;
+    }
+
+    const QVariant eventsValue = downloadResponse.value(QStringLiteral("events"));
+    if (eventsValue.metaType().id() != QMetaType::QVariantList) {
+        setError(error, QStringLiteral("Remote download response is missing events."));
+        return false;
+    }
+
+    QList<DLSyncEventEnvelope> events;
+    const QVariantList eventItems = eventsValue.toList();
+    for (const QVariant& eventItem : eventItems) {
+        if (eventItem.metaType().id() != QMetaType::QVariantMap) {
+            setError(error, QStringLiteral("Remote download event is not an object."));
+            return false;
+        }
+
+        qint64 serverSequence = 0;
+        const QVariantMap eventMap = eventItem.toMap();
+        if (!nonNegativeSequence(eventMap.value(QStringLiteral("serverSequence")),
+                                 QStringLiteral("serverSequence"),
+                                 &serverSequence,
+                                 error)) {
+            return false;
+        }
+        if (serverSequence > nextSequence) {
+            setError(error, QStringLiteral("Remote download event sequence is beyond nextSequence."));
+            return false;
+        }
+
+        DLSyncEventEnvelope event;
+        if (!eventFromDownloadMap(eventMap, &event, error)) {
+            return false;
+        }
+        events.append(event);
+    }
+
+    return applyRemoteEventsAndAdvanceCursor(events, nextSequence, error);
 }
 
 bool DLRemoteChangeReconciler::replaceLocalStateWithRemoteEventsAndAdvanceCursor(const QList<DLSyncEventEnvelope>& events,

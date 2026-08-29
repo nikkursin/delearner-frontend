@@ -3,6 +3,7 @@
 
 #include <QList>
 #include <QString>
+#include <QVariantMap>
 
 #include "DLSyncEventSerializer.h"
 
@@ -19,6 +20,8 @@ public:
     bool applyRemoteEventsAndAdvanceCursor(const QList<DLSyncEventEnvelope>& events,
                                            qint64 consumedSequence,
                                            QString* error = nullptr);
+    bool applyDownloadedEventsAndAdvanceCursor(const QVariantMap& downloadResponse,
+                                               QString* error = nullptr);
     bool replaceLocalStateWithRemoteEventsAndAdvanceCursor(const QList<DLSyncEventEnvelope>& events,
                                                            qint64 consumedSequence,
                                                            QString* error = nullptr);

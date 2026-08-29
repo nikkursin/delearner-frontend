@@ -12,6 +12,7 @@
 #include "Repositories/DLReviewStatsRepository.h"
 #include "Repositories/DLWordRepository.h"
 #include "Sync/DLBootstrapStateRestorer.h"
+#include "Sync/DLRemoteChangeReconciler.h"
 
 class TestBootstrapStateRestorer : public QObject
 {
@@ -22,10 +23,12 @@ private slots:
     void cleanup();
 
     void restoresBootstrapStateForFreeCoreRepositories();
+    void restoreThenDownloadedCatchUpAppliesPostBootstrapMutationBeforeReady();
     void refusesToReplaceStateWhenPendingOutboxExists();
 
 private:
     QVariantMap bootstrapResponse(qint64 serverSequence) const;
+    QVariantMap catchUpDownloadResponse(qint64 serverSequence) const;
     QString m_dbPath;
 };
 
@@ -146,6 +149,37 @@ QVariantMap TestBootstrapStateRestorer::bootstrapResponse(qint64 serverSequence)
     return response;
 }
 
+QVariantMap TestBootstrapStateRestorer::catchUpDownloadResponse(qint64 serverSequence) const
+{
+    QVariantMap payload{
+        { QStringLiteral("id"), kGroupId },
+        { QStringLiteral("ownerUserId"), DLTestSupport::testUserId() },
+        { QStringLiteral("name"), QStringLiteral("Travel updated during bootstrap") },
+        { QStringLiteral("color_hex"), QStringLiteral("#27AE60") },
+        { QStringLiteral("created_at"), QStringLiteral("2026-01-15T08:30:00Z") },
+        { QStringLiteral("updated_at"), QStringLiteral("2026-01-15T08:45:00Z") }
+    };
+
+    QVariantMap event;
+    event.insert(QStringLiteral("serverSequence"), serverSequence);
+    event.insert(QStringLiteral("eventId"), QStringLiteral("d13567cf-5daf-4fa3-9208-112e9aee3520"));
+    event.insert(QStringLiteral("deviceId"), QStringLiteral("b8e96c4a-f2cb-4ef3-8412-d6694a8358e4"));
+    event.insert(QStringLiteral("entityType"), QStringLiteral("group"));
+    event.insert(QStringLiteral("entityId"), kGroupId);
+    event.insert(QStringLiteral("operation"), QStringLiteral("update"));
+    event.insert(QStringLiteral("baseVersion"), 0);
+    event.insert(QStringLiteral("occurredAt"), 456);
+    event.insert(QStringLiteral("payload"), payload);
+
+    QVariantMap response;
+    response.insert(QStringLiteral("events"), QVariantList{event});
+    response.insert(QStringLiteral("nextSequence"), serverSequence);
+    response.insert(QStringLiteral("hasMore"), false);
+    response.insert(QStringLiteral("cursorGapDetected"), false);
+    response.insert(QStringLiteral("firstAvailableSequence"), 0);
+    return response;
+}
+
 void TestBootstrapStateRestorer::restoresBootstrapStateForFreeCoreRepositories()
 {
     DLGroupRepository groups(DLDatabaseManager::instance());
@@ -192,6 +226,25 @@ void TestBootstrapStateRestorer::restoresBootstrapStateForFreeCoreRepositories()
                  QStringLiteral("SELECT COUNT(*) FROM groups WHERE sync_id = :sync_id AND deleted_at IS NOT NULL;"),
                  {{ QStringLiteral(":sync_id"), kDeletedGroupId }}),
              1);
+}
+
+void TestBootstrapStateRestorer::restoreThenDownloadedCatchUpAppliesPostBootstrapMutationBeforeReady()
+{
+    DLBootstrapStateRestorer restorer(DLDatabaseManager::instance());
+    QString error;
+    QVERIFY2(restorer.restoreFromResponse(bootstrapResponse(77), &error), qPrintable(error));
+    QCOMPARE(DLDatabaseManager::instance().remoteCursor(), qint64(77));
+    QCOMPARE(DLDatabaseManager::instance().fetchGroupById(kGroupId).value(QStringLiteral("name")).toString(),
+             QStringLiteral("Travel"));
+
+    DLRemoteChangeReconciler reconciler(DLDatabaseManager::instance());
+    QVERIFY2(reconciler.applyDownloadedEventsAndAdvanceCursor(catchUpDownloadResponse(78), &error),
+             qPrintable(error));
+
+    QCOMPARE(DLDatabaseManager::instance().remoteCursor(), qint64(78));
+    QCOMPARE(DLDatabaseManager::instance().fetchGroupById(kGroupId).value(QStringLiteral("name")).toString(),
+             QStringLiteral("Travel updated during bootstrap"));
+    QCOMPARE(DLDatabaseManager::instance().selectInt(QStringLiteral("SELECT COUNT(*) FROM sync_outbox_events;")), 0);
 }
 
 void TestBootstrapStateRestorer::refusesToReplaceStateWhenPendingOutboxExists()
