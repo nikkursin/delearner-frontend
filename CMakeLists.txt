@@ -40,7 +40,7 @@ list(REMOVE_ITEM AssetsFiles ${QmlFiles})
 list(APPEND AssetsFiles assets/icons/sort_words_icon.svg)
 list(REMOVE_DUPLICATES AssetsFiles)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Sql Test)
+find_package(Qt6 REQUIRED COMPONENTS Core Network Sql Test)
 
 option(DELEARNER_BUILD_APP "Build the Felgo application target." ON)
 if(DELEARNER_BUILD_APP AND NOT Felgo_FOUND)
@@ -49,6 +49,12 @@ if(DELEARNER_BUILD_APP AND NOT Felgo_FOUND)
 endif()
 
 set(DELEARNER_CORE_SOURCES
+    src/Auth/DLAuthSession.cpp
+    src/Auth/DLAuthSession.h
+    src/Auth/DLAuthSessionStore.cpp
+    src/Auth/DLAuthSessionStore.h
+    src/Auth/DLClientAuthService.cpp
+    src/Auth/DLClientAuthService.h
     src/Logging/DLLogging.cpp
     src/Logging/DLLogging.h
     src/Managers/DLDatabaseManager.cpp
@@ -90,6 +96,7 @@ qt_add_library(delearner_core STATIC
 target_include_directories(delearner_core
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Auth
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Logging
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Managers
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Models
@@ -97,7 +104,7 @@ target_include_directories(delearner_core
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Services
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Sync
 )
-target_link_libraries(delearner_core PUBLIC Qt6::Core Qt6::Sql)
+target_link_libraries(delearner_core PUBLIC Qt6::Core Qt6::Network Qt6::Sql)
 
 if(DELEARNER_BUILD_APP)
     qt_add_executable(delearner
@@ -144,6 +151,7 @@ if(DELEARNER_BUILD_APP)
 
     target_link_libraries(delearner PRIVATE Felgo)
     target_link_libraries(delearner PRIVATE Qt6::Core)
+    target_link_libraries(delearner PRIVATE Qt6::Network)
     target_link_libraries(delearner PRIVATE Qt6::Sql)
     target_link_libraries(delearner PRIVATE delearner_core)
 

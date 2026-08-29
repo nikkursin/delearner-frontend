@@ -5,6 +5,7 @@
 #include <QFileInfo>
 #include <QUrl>
 
+#include "Auth/DLClientAuthService.h"
 #include "DLDatabaseManager.h"
 #include "DLDatabaseExportService.h"
 #include "DLGroupService.h"
@@ -31,14 +32,48 @@ void DLAppStateManager::init(const QString& databasePath)
     m_databasePath = databasePath;
     qCInfo(dlApp) << "Initializing app state";
 
-    if (!DLDatabaseManager::instance().openDatabase(databasePath)) {
-        setLastError(DLDatabaseManager::instance().lastError());
-        qCCritical(dlApp) << "App initialization failed:" << m_lastError;
+    const QString authSessionPath = QStringLiteral("%1.auth.json").arg(databasePath);
+    m_authService = std::make_unique<DLClientAuthService>(authSessionPath);
+    connect(m_authService.get(), &DLClientAuthService::authSucceeded, this, [this]() {
+        setAuthBusy(false);
+        setAuthState(QStringLiteral("authenticated_session"));
+        if (!openFreeCore()) {
+            return;
+        }
+        setLastError(QString());
+        navigateTo(AddEditWordPage);
+    });
+    connect(m_authService.get(), &DLClientAuthService::authFailed, this, [this](const QString& message) {
+        setAuthBusy(false);
+        setLastError(message);
+        setAuthState(QStringLiteral("authentication_required"));
+        navigateTo(AuthPage);
+    });
+
+    if (!m_authService->hasPriorSuccessfulAuthentication()) {
+        setAuthState(QStringLiteral("authentication_required"));
+        navigateTo(AuthPage);
+        return;
+    }
+
+    setAuthState(DLClientAuthService::stateName(m_authService->startupState(true)));
+    if (!openFreeCore()) {
         return;
     }
 
     setLastError(QString());
     navigateTo(AddEditWordPage);
+}
+
+bool DLAppStateManager::openFreeCore()
+{
+    if (!DLDatabaseManager::instance().openDatabase(m_databasePath)) {
+        setLastError(DLDatabaseManager::instance().lastError());
+        qCCritical(dlApp) << "App initialization failed:" << m_lastError;
+        return false;
+    }
+
+    return true;
 }
 
 DLAppStateManager::DLScreen DLAppStateManager::currentScreen() const
@@ -54,6 +89,16 @@ QString DLAppStateManager::lastError() const
 QString DLAppStateManager::selectedWordId() const
 {
     return m_selectedWordId;
+}
+
+QString DLAppStateManager::authState() const
+{
+    return m_authState;
+}
+
+bool DLAppStateManager::authBusy() const
+{
+    return m_authBusy;
 }
 
 void DLAppStateManager::goStartupLoadingPage() { navigateTo(StartupLoadingPage); }
@@ -82,6 +127,28 @@ void DLAppStateManager::goTranslationQuizSessionPage() { navigateTo(TranslationQ
 void DLAppStateManager::goArticleQuizSessionPage() { navigateTo(ArticleQuizSessionPage); }
 void DLAppStateManager::goQuizResults() { navigateTo(QuizResults); }
 void DLAppStateManager::goSettingsPage() { navigateTo(SettingsPage); }
+
+void DLAppStateManager::signIn(const QString& email, const QString& password)
+{
+    if (!m_authService || m_authBusy) {
+        return;
+    }
+
+    setLastError(QString());
+    setAuthBusy(true);
+    m_authService->signIn(email, password);
+}
+
+void DLAppStateManager::registerAccount(const QString& email, const QString& password)
+{
+    if (!m_authService || m_authBusy) {
+        return;
+    }
+
+    setLastError(QString());
+    setAuthBusy(true);
+    m_authService->registerAccount(email, password);
+}
 
 QVariantList DLAppStateManager::availableGroups()
 {
@@ -446,6 +513,26 @@ void DLAppStateManager::setSelectedWordId(const QString& syncId)
 
     m_selectedWordId = syncId;
     emit selectedWordIdChanged();
+}
+
+void DLAppStateManager::setAuthState(const QString& authState)
+{
+    if (m_authState == authState) {
+        return;
+    }
+
+    m_authState = authState;
+    emit authStateChanged();
+}
+
+void DLAppStateManager::setAuthBusy(bool authBusy)
+{
+    if (m_authBusy == authBusy) {
+        return;
+    }
+
+    m_authBusy = authBusy;
+    emit authBusyChanged();
 }
 
 QString DLAppStateManager::localPathFromUrlOrPath(const QString& value) const

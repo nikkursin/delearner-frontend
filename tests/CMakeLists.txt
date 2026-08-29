@@ -5,6 +5,7 @@ set(DELEARNER_TESTS
     TestReviewStatsRepository
     TestQuizRepository
     TestSyncEventSerializer
+    TestAuthSessionStore
 )
 
 foreach(test_name IN LISTS DELEARNER_TESTS)
@@ -16,16 +17,40 @@ foreach(test_name IN LISTS DELEARNER_TESTS)
         PRIVATE
             delearner_core
             Qt6::Test
+            Qt6::Network
             Qt6::Sql
     )
 
     add_test(NAME ${test_name} COMMAND ${test_name})
 endforeach()
 
+qt_add_executable(TestAppStateAuthBootstrap
+    TestAppStateAuthBootstrap.cpp
+    ../src/Managers/DLAppStateManager.cpp
+    ../src/Services/DLDatabaseExportService.cpp
+    ../src/Services/DLDatabaseExportService.h
+)
+
+target_link_libraries(TestAppStateAuthBootstrap
+    PRIVATE
+        delearner_core
+        Qt6::Test
+        Qt6::Network
+        Qt6::Sql
+)
+
+add_test(NAME TestAppStateAuthBootstrap COMMAND TestAppStateAuthBootstrap)
+
 find_program(PYTHON3_EXECUTABLE python3)
 get_filename_component(DELEARNER_ROOT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
 if(TARGET TestSyncEventSerializer)
     target_compile_definitions(TestSyncEventSerializer
+        PRIVATE
+            DELEARNER_ROOT_DIR="${DELEARNER_ROOT_DIR}"
+    )
+endif()
+if(TARGET TestAuthSessionStore)
+    target_compile_definitions(TestAuthSessionStore
         PRIVATE
             DELEARNER_ROOT_DIR="${DELEARNER_ROOT_DIR}"
     )

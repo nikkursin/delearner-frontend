@@ -10,6 +10,7 @@
 class DLGroupService;
 class DLQuizService;
 class DLWordService;
+class DLClientAuthService;
 
 class DLAppStateManager : public QObject
 {
@@ -18,10 +19,13 @@ class DLAppStateManager : public QObject
     Q_PROPERTY(DLScreen currentScreen READ currentScreen NOTIFY currentScreenChanged)
     Q_PROPERTY(QString lastError READ lastError NOTIFY lastErrorChanged)
     Q_PROPERTY(QString selectedWordId READ selectedWordId NOTIFY selectedWordIdChanged)
+    Q_PROPERTY(QString authState READ authState NOTIFY authStateChanged)
+    Q_PROPERTY(bool authBusy READ authBusy NOTIFY authBusyChanged)
 public:
     enum DLScreen
     {
         StartupLoadingPage,
+        AuthPage,
         WordsPage,
         WordDetails,
         AddEditWordPage,
@@ -45,6 +49,8 @@ public:
     DLScreen currentScreen() const;
     QString lastError() const;
     QString selectedWordId() const;
+    QString authState() const;
+    bool authBusy() const;
 
     Q_INVOKABLE void goStartupLoadingPage();
     Q_INVOKABLE void goWordsPage();
@@ -58,6 +64,8 @@ public:
     Q_INVOKABLE void goArticleQuizSessionPage();
     Q_INVOKABLE void goQuizResults();
     Q_INVOKABLE void goSettingsPage();
+    Q_INVOKABLE void signIn(const QString& email, const QString& password);
+    Q_INVOKABLE void registerAccount(const QString& email, const QString& password);
 
     Q_INVOKABLE QVariantList availableGroups();
     Q_INVOKABLE QString createGroup(const QString& name, const QString& colorHex = QStringLiteral("#337fe6"));
@@ -106,6 +114,8 @@ signals:
     void currentScreenChanged();
     void lastErrorChanged();
     void selectedWordIdChanged();
+    void authStateChanged();
+    void authBusyChanged();
     void wordsChanged();
     void groupsChanged();
     void quizStateChanged();
@@ -114,12 +124,18 @@ private:
     void navigateTo(const DLScreen& screen);
     void setLastError(const QString& error);
     void setSelectedWordId(const QString& syncId);
+    void setAuthState(const QString& authState);
+    void setAuthBusy(bool authBusy);
+    bool openFreeCore();
     QString localPathFromUrlOrPath(const QString& value) const;
 
     DLScreen m_currentScreen = StartupLoadingPage;
     QString m_lastError;
     QString m_databasePath;
     QString m_selectedWordId;
+    QString m_authState;
+    bool m_authBusy = false;
+    std::unique_ptr<DLClientAuthService> m_authService;
     std::unique_ptr<DLWordService> m_wordService;
     std::unique_ptr<DLGroupService> m_groupService;
     std::unique_ptr<DLQuizService> m_quizService;

@@ -60,26 +60,28 @@ App {
                case 0:
                    return startupLoadingPage
                case 1:
-                   return wordsPage
+                   return authPage
                case 2:
-                   return wordDetails
+                   return wordsPage
                case 3:
-                   return addEditWordPage
+                   return wordDetails
                case 4:
-                   return groupsPage
+                   return addEditWordPage
                case 5:
-                   return groupEditPage
+                   return groupsPage
                case 6:
-                   return quizHomePage
+                   return groupEditPage
                case 7:
-                   return quizSetupPage
+                   return quizHomePage
                case 8:
-                   return translationQuizSessionPage
+                   return quizSetupPage
                case 9:
-                   return articleQuizSessionPage
+                   return translationQuizSessionPage
                case 10:
-                   return quizResults
+                   return articleQuizSessionPage
                case 11:
+                   return quizResults
+               case 12:
                    return settingsPage
                default:
                    return startupLoadingPage
@@ -91,6 +93,13 @@ App {
            id: startupLoadingPage
 
            DLStartupLoadingPage {
+           }
+       }
+
+       Component {
+           id: authPage
+
+           DLAuthPage {
            }
        }
 
