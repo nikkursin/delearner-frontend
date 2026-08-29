@@ -11,6 +11,7 @@ class DLGroupService;
 class DLQuizService;
 class DLWordService;
 class DLClientAuthService;
+class DLSyncCoordinator;
 
 class DLAppStateManager : public QObject
 {
@@ -66,6 +67,8 @@ public:
     Q_INVOKABLE void goSettingsPage();
     Q_INVOKABLE void signIn(const QString& email, const QString& password);
     Q_INVOKABLE void registerAccount(const QString& email, const QString& password);
+    Q_INVOKABLE void setApplicationActive(bool active);
+    Q_INVOKABLE void setNetworkAvailable(bool available);
 
     Q_INVOKABLE QVariantList availableGroups();
     Q_INVOKABLE QString createGroup(const QString& name, const QString& colorHex = QStringLiteral("#337fe6"));
@@ -127,6 +130,8 @@ private:
     void setAuthState(const QString& authState);
     void setAuthBusy(bool authBusy);
     bool openFreeCore();
+    void requestActiveSync();
+    void handleSyncFinished(bool success);
     QString localPathFromUrlOrPath(const QString& value) const;
 
     DLScreen m_currentScreen = StartupLoadingPage;
@@ -135,7 +140,11 @@ private:
     QString m_selectedWordId;
     QString m_authState;
     bool m_authBusy = false;
+    bool m_applicationActive = true;
+    bool m_networkAvailable = true;
+    bool m_syncRequestedDuringCycle = false;
     std::unique_ptr<DLClientAuthService> m_authService;
+    std::unique_ptr<DLSyncCoordinator> m_syncCoordinator;
     std::unique_ptr<DLWordService> m_wordService;
     std::unique_ptr<DLGroupService> m_groupService;
     std::unique_ptr<DLQuizService> m_quizService;

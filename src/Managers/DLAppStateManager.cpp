@@ -11,6 +11,7 @@
 #include "DLGroupService.h"
 #include "DLLogging.h"
 #include "DLQuizService.h"
+#include "Sync/DLSyncCoordinator.h"
 #include "DLWordService.h"
 
 DLAppStateManager::DLAppStateManager(QObject *parent)
@@ -42,6 +43,7 @@ void DLAppStateManager::init(const QString& databasePath)
         }
         setLastError(QString());
         navigateTo(AddEditWordPage);
+        requestActiveSync();
     });
     connect(m_authService.get(), &DLClientAuthService::authFailed, this, [this](const QString& message) {
         setAuthBusy(false);
@@ -56,13 +58,14 @@ void DLAppStateManager::init(const QString& databasePath)
         return;
     }
 
-    setAuthState(DLClientAuthService::stateName(m_authService->startupState(true)));
+    setAuthState(DLClientAuthService::stateName(m_authService->startupState(m_networkAvailable)));
     if (!openFreeCore()) {
         return;
     }
 
     setLastError(QString());
     navigateTo(AddEditWordPage);
+    requestActiveSync();
 }
 
 bool DLAppStateManager::openFreeCore()
@@ -77,6 +80,17 @@ bool DLAppStateManager::openFreeCore()
         setLastError(DLDatabaseManager::instance().lastError());
         qCCritical(dlApp) << "App initialization failed:" << m_lastError;
         return false;
+    }
+
+    m_syncCoordinator.reset();
+    if (m_authService && m_authService->hasRegisteredDevice()) {
+        m_syncCoordinator = std::make_unique<DLSyncCoordinator>(
+            DLDatabaseManager::instance(),
+            DLClientAuthService::defaultApiBaseUrl(),
+            this);
+        connect(m_syncCoordinator.get(), &DLSyncCoordinator::syncFinished, this, [this](bool success) {
+            handleSyncFinished(success);
+        });
     }
 
     return true;
@@ -156,6 +170,30 @@ void DLAppStateManager::registerAccount(const QString& email, const QString& pas
     m_authService->registerAccount(email, password);
 }
 
+void DLAppStateManager::setApplicationActive(bool active)
+{
+    if (m_applicationActive == active) {
+        return;
+    }
+
+    m_applicationActive = active;
+    if (m_applicationActive) {
+        requestActiveSync();
+    }
+}
+
+void DLAppStateManager::setNetworkAvailable(bool available)
+{
+    if (m_networkAvailable == available) {
+        return;
+    }
+
+    m_networkAvailable = available;
+    if (m_networkAvailable) {
+        requestActiveSync();
+    }
+}
+
 QVariantList DLAppStateManager::availableGroups()
 {
     const QVariantList groups = m_groupService->availableGroups();
@@ -170,6 +208,7 @@ QString DLAppStateManager::createGroup(const QString& name, const QString& color
     if (!newId.isEmpty()) {
         emit groupsChanged();
         emit wordsChanged();
+        requestActiveSync();
     }
     return newId;
 }
@@ -181,6 +220,7 @@ bool DLAppStateManager::updateGroup(const QString& syncId, const QString& name, 
     if (success) {
         emit groupsChanged();
         emit wordsChanged();
+        requestActiveSync();
     }
     return success;
 }
@@ -192,6 +232,7 @@ bool DLAppStateManager::deleteGroup(const QString& syncId)
     if (success) {
         emit groupsChanged();
         emit wordsChanged();
+        requestActiveSync();
     }
     return success;
 }
@@ -249,6 +290,7 @@ QString DLAppStateManager::createWord(const QVariantMap& wordData)
     setLastError(m_wordService->lastError());
     if (!newId.isEmpty()) {
         emit wordsChanged();
+        requestActiveSync();
     }
     return newId;
 }
@@ -259,6 +301,7 @@ bool DLAppStateManager::updateWord(const QString& syncId, const QVariantMap& wor
     setLastError(m_wordService->lastError());
     if (success) {
         emit wordsChanged();
+        requestActiveSync();
     }
     return success;
 }
@@ -272,6 +315,7 @@ bool DLAppStateManager::deleteWord(const QString& syncId)
             setSelectedWordId(QString());
         }
         emit wordsChanged();
+        requestActiveSync();
     }
     return success;
 }
@@ -459,6 +503,7 @@ QVariantMap DLAppStateManager::submitQuizAnswer(const QString& answer)
     if (!question.isEmpty()) {
         emit wordsChanged();
         emit quizStateChanged();
+        requestActiveSync();
     }
     return question;
 }
@@ -539,6 +584,37 @@ void DLAppStateManager::setAuthBusy(bool authBusy)
 
     m_authBusy = authBusy;
     emit authBusyChanged();
+}
+
+void DLAppStateManager::requestActiveSync()
+{
+    if (!m_applicationActive || !m_networkAvailable || !m_authService || !m_syncCoordinator) {
+        return;
+    }
+
+    const std::optional<DLAuthSession> session = m_authService->currentSession();
+    if (!session.has_value() || !session->hasSessionCredentials() || !session->hasRegisteredDevice()) {
+        return;
+    }
+
+    if (m_syncCoordinator->syncInProgress()) {
+        m_syncRequestedDuringCycle = true;
+        return;
+    }
+
+    m_syncRequestedDuringCycle = false;
+    m_syncCoordinator->startSync(session.value());
+}
+
+void DLAppStateManager::handleSyncFinished(bool success)
+{
+    if (!success || !m_syncRequestedDuringCycle) {
+        m_syncRequestedDuringCycle = false;
+        return;
+    }
+
+    m_syncRequestedDuringCycle = false;
+    requestActiveSync();
 }
 
 QString DLAppStateManager::localPathFromUrlOrPath(const QString& value) const

@@ -45,6 +45,7 @@ public:
     bool hasSessionCredentials() const;
     bool hasRegisteredDevice() const;
     bool canUseFreeCoreOffline() const;
+    std::optional<DLAuthSession> currentSession() const;
 
     StartupState startupState(bool networkAvailable) const;
 
@@ -63,7 +64,6 @@ private:
     void registerAuthenticatedDevice(const DLAuthSession& session);
     void handleDeviceRegistrationReply(QNetworkReply* reply, DLAuthSession session);
     QString defaultDeviceDisplayName() const;
-    std::optional<DLAuthSession> currentSession() const;
     void setLastError(const QString& error);
 
     DLAuthSessionStore m_store;

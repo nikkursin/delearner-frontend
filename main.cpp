@@ -8,6 +8,7 @@
 #include <QStandardPaths>
 #include <QDir>
 #include <QFileInfo>
+#include <QNetworkInformation>
 #include <QTimer>
 
 #include "Managers/DLAppStateManager.h"
@@ -39,6 +40,20 @@ int main(int argc, char *argv[])
     felgo.setMainQmlFileName(QStringLiteral("qml/Main.qml"));
 
     engine.load(QUrl(felgo.mainQmlFileName()));
+
+    QObject::connect(&app, &QGuiApplication::applicationStateChanged, appStateManager.data(), [appStateManager = appStateManager.data()](Qt::ApplicationState state) {
+        appStateManager->setApplicationActive(state == Qt::ApplicationActive);
+    });
+    appStateManager->setApplicationActive(app.applicationState() == Qt::ApplicationActive);
+
+    if (QNetworkInformation::loadDefaultBackend()) {
+        QNetworkInformation* networkInformation = QNetworkInformation::instance();
+        const auto applyReachability = [appStateManager = appStateManager.data()](QNetworkInformation::Reachability reachability) {
+            appStateManager->setNetworkAvailable(reachability != QNetworkInformation::Reachability::Disconnected);
+        };
+        applyReachability(networkInformation->reachability());
+        QObject::connect(networkInformation, &QNetworkInformation::reachabilityChanged, appStateManager.data(), applyReachability);
+    }
 
     appStateManager->init(dbPath);
 
