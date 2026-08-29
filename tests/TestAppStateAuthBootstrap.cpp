@@ -26,6 +26,9 @@ private slots:
     void priorSuccessfulAuthenticationOpensFreeCore();
     void activeConnectedStartupPullsRemoteChangesWithoutPolling();
     void activeConnectedLocalMutationStartsQueuedSync();
+    void resumeStartsOneSyncAfterInactiveStartup();
+    void networkRestorationStartsOneSyncAfterOfflineStartup();
+    void overlappingResumeAndNetworkRestorationCoalesceOneFollowUpSync();
 
 private:
     QByteArray m_previousApiBaseUrl;
@@ -233,6 +236,109 @@ void TestAppStateAuthBootstrap::activeConnectedLocalMutationStartsQueuedSync()
     std::unique_ptr<QTcpSocket> followUpPullSocket(server.nextPendingConnection());
     QVERIFY(readHttpRequest(followUpPullSocket.get()).startsWith("GET /events?after=0 "));
     writeEmptyPullResponse(followUpPullSocket.get());
+}
+
+void TestAppStateAuthBootstrap::resumeStartsOneSyncAfterInactiveStartup()
+{
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    qputenv("DELEARNER_API_BASE_URL", QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort()).toUtf8());
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString databasePath = dir.filePath(QStringLiteral("delearner.sqlite"));
+
+    DLAuthSessionStore store(QStringLiteral("%1.auth.json").arg(databasePath));
+    QVERIFY2(store.saveSuccessfulSession(registeredSession()), qPrintable(store.lastError()));
+
+    DLAppStateManager manager;
+    manager.setApplicationActive(false);
+    manager.init(databasePath);
+
+    QVERIFY(!server.waitForNewConnection(100));
+
+    manager.setApplicationActive(true);
+    manager.setApplicationActive(true);
+
+    QTRY_VERIFY(server.hasPendingConnections());
+    std::unique_ptr<QTcpSocket> pullSocket(server.nextPendingConnection());
+    const QByteArray pullRequest = readHttpRequest(pullSocket.get());
+    QVERIFY(pullRequest.startsWith("GET /events?after=0 "));
+    writeEmptyPullResponse(pullSocket.get());
+
+    QVERIFY(!server.waitForNewConnection(100));
+}
+
+void TestAppStateAuthBootstrap::networkRestorationStartsOneSyncAfterOfflineStartup()
+{
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    qputenv("DELEARNER_API_BASE_URL", QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort()).toUtf8());
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString databasePath = dir.filePath(QStringLiteral("delearner.sqlite"));
+
+    DLAuthSessionStore store(QStringLiteral("%1.auth.json").arg(databasePath));
+    QVERIFY2(store.saveSuccessfulSession(registeredSession()), qPrintable(store.lastError()));
+
+    DLAppStateManager manager;
+    manager.setNetworkAvailable(false);
+    manager.init(databasePath);
+
+    QVERIFY(!server.waitForNewConnection(100));
+
+    manager.setNetworkAvailable(true);
+    manager.setNetworkAvailable(true);
+
+    QTRY_VERIFY(server.hasPendingConnections());
+    std::unique_ptr<QTcpSocket> pullSocket(server.nextPendingConnection());
+    const QByteArray pullRequest = readHttpRequest(pullSocket.get());
+    QVERIFY(pullRequest.startsWith("GET /events?after=0 "));
+    writeEmptyPullResponse(pullSocket.get());
+
+    QVERIFY(!server.waitForNewConnection(100));
+}
+
+void TestAppStateAuthBootstrap::overlappingResumeAndNetworkRestorationCoalesceOneFollowUpSync()
+{
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    qputenv("DELEARNER_API_BASE_URL", QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort()).toUtf8());
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString databasePath = dir.filePath(QStringLiteral("delearner.sqlite"));
+
+    DLAuthSessionStore store(QStringLiteral("%1.auth.json").arg(databasePath));
+    QVERIFY2(store.saveSuccessfulSession(registeredSession()), qPrintable(store.lastError()));
+
+    DLAppStateManager manager;
+    manager.init(databasePath);
+
+    QTRY_VERIFY(server.hasPendingConnections());
+    std::unique_ptr<QTcpSocket> firstPullSocket(server.nextPendingConnection());
+    const QByteArray firstPullRequest = readHttpRequest(firstPullSocket.get());
+    QVERIFY(firstPullRequest.startsWith("GET /events?after=0 "));
+
+    manager.setApplicationActive(false);
+    manager.setApplicationActive(true);
+    manager.setApplicationActive(true);
+    manager.setNetworkAvailable(false);
+    manager.setNetworkAvailable(true);
+    manager.setNetworkAvailable(true);
+
+    QVERIFY(!server.waitForNewConnection(100));
+
+    writeEmptyPullResponse(firstPullSocket.get());
+
+    QTRY_VERIFY(server.hasPendingConnections());
+    std::unique_ptr<QTcpSocket> followUpPullSocket(server.nextPendingConnection());
+    const QByteArray followUpPullRequest = readHttpRequest(followUpPullSocket.get());
+    QVERIFY(followUpPullRequest.startsWith("GET /events?after=0 "));
+    writeEmptyPullResponse(followUpPullSocket.get());
+
+    QVERIFY(!server.waitForNewConnection(100));
 }
 
 QTEST_MAIN(TestAppStateAuthBootstrap)
