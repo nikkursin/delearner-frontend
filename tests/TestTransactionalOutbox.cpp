@@ -27,6 +27,8 @@ private slots:
     void outboxWriteRollsBackWhenTransactionFailsAfterEventInsert();
     void groupDeleteRecordsTombstoneAndAffectedWordUpdate();
     void reviewStatsIncrementCreatesOutboxEvent();
+    void sendAttemptKeepsActiveOutboxEventForRetry();
+    void acknowledgementMovesEventToBoundedDiagnosticHistory();
 
 private:
     QString m_dbPath;
@@ -142,6 +144,114 @@ void TestTransactionalOutbox::reviewStatsIncrementCreatesOutboxEvent()
     QCOMPARE(DLDatabaseManager::instance().selectInt(
                  QStringLiteral("SELECT COUNT(*) FROM sync_outbox_events WHERE entity_type = 'word_review_stats' AND entity_id = :id;"),
                  {{ QStringLiteral(":id"), wordId }}),
+             1);
+}
+
+void TestTransactionalOutbox::sendAttemptKeepsActiveOutboxEventForRetry()
+{
+    DLWord word;
+    word.germanWord = QStringLiteral("Fenster");
+    word.nativeTranslation = QStringLiteral("window");
+    const QString wordId = DLWordRepository(DLDatabaseManager::instance()).insertWord(word);
+    QVERIFY(!wordId.isEmpty());
+
+    const QVariantMap initialOutbox = DLDatabaseManager::instance().selectOneRow(
+        QStringLiteral("SELECT event_id FROM sync_outbox_events WHERE entity_id = :entity_id;"),
+        {{ QStringLiteral(":entity_id"), wordId }});
+    const QString eventId = initialOutbox.value(QStringLiteral("event_id")).toString();
+    QVERIFY(!eventId.isEmpty());
+
+    QVERIFY2(DLDatabaseManager::instance().recordSyncOutboxSendAttempt(eventId, 1234, QStringLiteral("timeout")),
+             qPrintable(DLDatabaseManager::instance().lastError()));
+    QVariantMap retriableOutbox = DLDatabaseManager::instance().selectOneRow(
+        QStringLiteral(R"(
+            SELECT event_id, send_attempt_count, last_attempted_at, next_attempt_after, last_error
+            FROM sync_outbox_events
+            WHERE event_id = :event_id;
+        )"),
+        {{ QStringLiteral(":event_id"), eventId }});
+    QCOMPARE(retriableOutbox.value(QStringLiteral("event_id")).toString(), eventId);
+    QCOMPARE(retriableOutbox.value(QStringLiteral("send_attempt_count")).toInt(), 1);
+    QVERIFY(retriableOutbox.value(QStringLiteral("last_attempted_at")).toLongLong() > 0);
+    QCOMPARE(retriableOutbox.value(QStringLiteral("next_attempt_after")).toLongLong(), 1234);
+    QCOMPARE(retriableOutbox.value(QStringLiteral("last_error")).toString(), QStringLiteral("timeout"));
+    QCOMPARE(DLDatabaseManager::instance().selectInt(QStringLiteral("SELECT COUNT(*) FROM sync_acknowledged_event_diagnostics;")), 0);
+
+    QVERIFY2(DLDatabaseManager::instance().recordSyncOutboxSendAttempt(eventId),
+             qPrintable(DLDatabaseManager::instance().lastError()));
+    retriableOutbox = DLDatabaseManager::instance().selectOneRow(
+        QStringLiteral("SELECT event_id, send_attempt_count FROM sync_outbox_events WHERE event_id = :event_id;"),
+        {{ QStringLiteral(":event_id"), eventId }});
+    QCOMPARE(retriableOutbox.value(QStringLiteral("event_id")).toString(), eventId);
+    QCOMPARE(retriableOutbox.value(QStringLiteral("send_attempt_count")).toInt(), 2);
+}
+
+void TestTransactionalOutbox::acknowledgementMovesEventToBoundedDiagnosticHistory()
+{
+    DLWord word;
+    word.germanWord = QStringLiteral("Tisch");
+    word.nativeTranslation = QStringLiteral("table");
+    const QString wordId = DLWordRepository(DLDatabaseManager::instance()).insertWord(word);
+    QVERIFY(!wordId.isEmpty());
+
+    const QVariantMap initialOutbox = DLDatabaseManager::instance().selectOneRow(
+        QStringLiteral("SELECT event_id FROM sync_outbox_events WHERE entity_id = :entity_id;"),
+        {{ QStringLiteral(":entity_id"), wordId }});
+    const QString eventId = initialOutbox.value(QStringLiteral("event_id")).toString();
+    QVERIFY(!eventId.isEmpty());
+
+    QVERIFY2(DLDatabaseManager::instance().recordSyncOutboxSendAttempt(eventId),
+             qPrintable(DLDatabaseManager::instance().lastError()));
+    QVERIFY2(DLDatabaseManager::instance().acknowledgeSyncOutboxEvent(
+                 eventId,
+                 42,
+                 QStringLiteral("{\"accepted\":true}"),
+                 QStringLiteral("{\"source\":\"test\"}")),
+             qPrintable(DLDatabaseManager::instance().lastError()));
+
+    QCOMPARE(DLDatabaseManager::instance().selectInt(
+                 QStringLiteral("SELECT COUNT(*) FROM sync_outbox_events WHERE event_id = :event_id;"),
+                 {{ QStringLiteral(":event_id"), eventId }}),
+             0);
+
+    QVariantMap diagnostic = DLDatabaseManager::instance().selectOneRow(
+        QStringLiteral(R"(
+            SELECT event_id, entity_type, entity_id, operation, server_sequence, canonical_result_json, diagnostic_json
+            FROM sync_acknowledged_event_diagnostics
+            WHERE event_id = :event_id;
+        )"),
+        {{ QStringLiteral(":event_id"), eventId }});
+    QCOMPARE(diagnostic.value(QStringLiteral("event_id")).toString(), eventId);
+    QCOMPARE(diagnostic.value(QStringLiteral("entity_type")).toString(), QStringLiteral("word"));
+    QCOMPARE(diagnostic.value(QStringLiteral("entity_id")).toString(), wordId);
+    QCOMPARE(diagnostic.value(QStringLiteral("operation")).toString(), QStringLiteral("create"));
+    QCOMPARE(diagnostic.value(QStringLiteral("server_sequence")).toLongLong(), 42);
+    QCOMPARE(diagnostic.value(QStringLiteral("canonical_result_json")).toString(), QStringLiteral("{\"accepted\":true}"));
+    QCOMPARE(diagnostic.value(QStringLiteral("diagnostic_json")).toString(), QStringLiteral("{\"source\":\"test\"}"));
+
+    for (int i = 0; i < 2; ++i) {
+        const QString oldEventId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        QVERIFY2(DLDatabaseManager::instance().executeSql(QStringLiteral(R"(
+            INSERT INTO sync_acknowledged_event_diagnostics
+                (event_id, contract_version, entity_type, entity_id, operation,
+                 updated_at, created_at, acknowledged_at)
+            VALUES
+                (:event_id, '1.0', 'word', :entity_id, 'update',
+                 10, 10, :acknowledged_at);
+        )"), {
+                { QStringLiteral(":event_id"), oldEventId },
+                { QStringLiteral(":entity_id"), wordId },
+                { QStringLiteral(":acknowledged_at"), i + 1 }
+            }),
+            qPrintable(DLDatabaseManager::instance().lastError()));
+    }
+
+    QVERIFY2(DLDatabaseManager::instance().purgeAcknowledgedSyncEventDiagnostics(1),
+             qPrintable(DLDatabaseManager::instance().lastError()));
+    QCOMPARE(DLDatabaseManager::instance().selectInt(QStringLiteral("SELECT COUNT(*) FROM sync_acknowledged_event_diagnostics;")), 1);
+    QCOMPARE(DLDatabaseManager::instance().selectInt(
+                 QStringLiteral("SELECT COUNT(*) FROM sync_acknowledged_event_diagnostics WHERE event_id = :event_id;"),
+                 {{ QStringLiteral(":event_id"), eventId }}),
              1);
 }
 

@@ -53,6 +53,15 @@ public:
     void clearSyncContext();
     bool hasSyncContext() const;
     bool recordSyncOutboxEvent(QSqlDatabase& db, QString* error, DLSyncEventEnvelope event);
+    bool recordSyncOutboxSendAttempt(const QString& eventId,
+                                     qint64 nextAttemptAfter = 0,
+                                     const QString& lastError = QString());
+    bool acknowledgeSyncOutboxEvent(const QString& eventId,
+                                    qint64 serverSequence = 0,
+                                    const QString& canonicalResultJson = QString(),
+                                    const QString& diagnosticJson = QString());
+    bool purgeAcknowledgedSyncEventDiagnostics(int maxEventsToKeep,
+                                               qint64 acknowledgedBefore = 0);
     void failAfterNextSyncOutboxWriteForTesting();
 
     static qint64 currentUnixTime();

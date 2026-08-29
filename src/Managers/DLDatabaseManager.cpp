@@ -975,6 +975,136 @@ bool DLDatabaseManager::recordSyncOutboxEvent(QSqlDatabase& db, QString* error, 
     return true;
 }
 
+bool DLDatabaseManager::recordSyncOutboxSendAttempt(const QString& eventId,
+                                                    qint64 nextAttemptAfter,
+                                                    const QString& lastError)
+{
+    QMutexLocker locker(&m_mutex);
+
+    QSqlQuery query(m_db);
+    query.prepare(QStringLiteral(R"(
+        UPDATE sync_outbox_events
+        SET send_attempt_count = send_attempt_count + 1,
+            last_attempted_at = :last_attempted_at,
+            next_attempt_after = :next_attempt_after,
+            last_error = :last_error
+        WHERE event_id = :event_id;
+    )"));
+    query.bindValue(QStringLiteral(":last_attempted_at"), DLDatabaseManager::currentUnixTime());
+    query.bindValue(QStringLiteral(":next_attempt_after"), nextAttemptAfter > 0 ? QVariant(nextAttemptAfter) : QVariant());
+    query.bindValue(QStringLiteral(":last_error"), lastError.isEmpty() ? QVariant() : QVariant(lastError));
+    query.bindValue(QStringLiteral(":event_id"), eventId.trimmed());
+
+    if (!query.exec()) {
+        m_lastError = query.lastError().text();
+        logSqlFailure("syncOutbox/recordSendAttempt", query.lastQuery(), {}, {}, {}, query.lastError());
+        return false;
+    }
+
+    if (query.numRowsAffected() != 1) {
+        m_lastError = QStringLiteral("Sync outbox event not found: %1").arg(eventId.trimmed());
+        return false;
+    }
+
+    m_lastError.clear();
+    return true;
+}
+
+bool DLDatabaseManager::acknowledgeSyncOutboxEvent(const QString& eventId,
+                                                   qint64 serverSequence,
+                                                   const QString& canonicalResultJson,
+                                                   const QString& diagnosticJson)
+{
+    const QString trimmedEventId = eventId.trimmed();
+
+    return transaction([&](QSqlDatabase& db, QString* error) {
+        QSqlQuery insert(db);
+        insert.prepare(QStringLiteral(R"(
+            INSERT INTO sync_acknowledged_event_diagnostics
+                (event_id, contract_version, entity_type, entity_id, operation,
+                 updated_at, created_at, acknowledged_at, server_sequence,
+                 canonical_result_json, diagnostic_json)
+            SELECT event_id, contract_version, entity_type, entity_id, operation,
+                   updated_at, created_at, :acknowledged_at, :server_sequence,
+                   :canonical_result_json, :diagnostic_json
+            FROM sync_outbox_events
+            WHERE event_id = :event_id;
+        )"));
+        insert.bindValue(QStringLiteral(":acknowledged_at"), DLDatabaseManager::currentUnixTime());
+        insert.bindValue(QStringLiteral(":server_sequence"), serverSequence > 0 ? QVariant(serverSequence) : QVariant());
+        insert.bindValue(QStringLiteral(":canonical_result_json"),
+                         canonicalResultJson.isEmpty() ? QVariant() : QVariant(canonicalResultJson));
+        insert.bindValue(QStringLiteral(":diagnostic_json"),
+                         diagnosticJson.isEmpty() ? QVariant() : QVariant(diagnosticJson));
+        insert.bindValue(QStringLiteral(":event_id"), trimmedEventId);
+
+        if (!insert.exec()) {
+            if (error) {
+                *error = insert.lastError().text();
+            }
+            logSqlFailure("syncOutbox/acknowledgeInsert", insert.lastQuery(), {}, {}, {}, insert.lastError());
+            return false;
+        }
+
+        if (insert.numRowsAffected() != 1) {
+            if (error) {
+                *error = QStringLiteral("Sync outbox event not found: %1").arg(trimmedEventId);
+            }
+            return false;
+        }
+
+        QSqlQuery remove(db);
+        remove.prepare(QStringLiteral("DELETE FROM sync_outbox_events WHERE event_id = :event_id;"));
+        remove.bindValue(QStringLiteral(":event_id"), trimmedEventId);
+        if (!remove.exec()) {
+            if (error) {
+                *error = remove.lastError().text();
+            }
+            logSqlFailure("syncOutbox/acknowledgeDelete", remove.lastQuery(), {}, {}, {}, remove.lastError());
+            return false;
+        }
+
+        if (remove.numRowsAffected() != 1) {
+            if (error) {
+                *error = QStringLiteral("Failed to remove acknowledged sync outbox event: %1").arg(trimmedEventId);
+            }
+            return false;
+        }
+
+        return true;
+    });
+}
+
+bool DLDatabaseManager::purgeAcknowledgedSyncEventDiagnostics(int maxEventsToKeep,
+                                                              qint64 acknowledgedBefore)
+{
+    if (maxEventsToKeep < 0 && acknowledgedBefore <= 0) {
+        setLastError(QStringLiteral("Acknowledged sync-event diagnostic purge requires a non-negative keep count or cutoff."));
+        return false;
+    }
+
+    if (maxEventsToKeep >= 0 && !executeSql(QStringLiteral(R"(
+        DELETE FROM sync_acknowledged_event_diagnostics
+        WHERE event_id IN (
+            SELECT event_id
+            FROM sync_acknowledged_event_diagnostics
+            ORDER BY acknowledged_at DESC, event_id DESC
+            LIMIT -1 OFFSET :max_events_to_keep
+        );
+    )"), {{ QStringLiteral(":max_events_to_keep"), maxEventsToKeep }})) {
+        return false;
+    }
+
+    if (acknowledgedBefore > 0 && !executeSql(QStringLiteral(R"(
+        DELETE FROM sync_acknowledged_event_diagnostics
+        WHERE acknowledged_at < :acknowledged_before;
+    )"), {{ QStringLiteral(":acknowledged_before"), acknowledgedBefore }})) {
+        return false;
+    }
+
+    return true;
+}
+
 void DLDatabaseManager::failAfterNextSyncOutboxWriteForTesting()
 {
     QMutexLocker locker(&m_mutex);
