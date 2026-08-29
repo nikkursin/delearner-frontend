@@ -67,6 +67,7 @@ public:
     Q_INVOKABLE void goSettingsPage();
     Q_INVOKABLE void signIn(const QString& email, const QString& password);
     Q_INVOKABLE void registerAccount(const QString& email, const QString& password);
+    Q_INVOKABLE bool requestManualSync();
     Q_INVOKABLE void setApplicationActive(bool active);
     Q_INVOKABLE void setNetworkAvailable(bool available);
 
@@ -130,7 +131,7 @@ private:
     void setAuthState(const QString& authState);
     void setAuthBusy(bool authBusy);
     bool openFreeCore();
-    void requestActiveSync();
+    bool requestActiveSync();
     void handleSyncFinished(bool success);
     QString localPathFromUrlOrPath(const QString& value) const;
 

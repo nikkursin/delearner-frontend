@@ -170,6 +170,15 @@ void DLAppStateManager::registerAccount(const QString& email, const QString& pas
     m_authService->registerAccount(email, password);
 }
 
+bool DLAppStateManager::requestManualSync()
+{
+    const bool requested = requestActiveSync();
+    if (!requested) {
+        setLastError(QStringLiteral("Sync is unavailable while offline, inactive or unauthenticated."));
+    }
+    return requested;
+}
+
 void DLAppStateManager::setApplicationActive(bool active)
 {
     if (m_applicationActive == active) {
@@ -586,24 +595,28 @@ void DLAppStateManager::setAuthBusy(bool authBusy)
     emit authBusyChanged();
 }
 
-void DLAppStateManager::requestActiveSync()
+bool DLAppStateManager::requestActiveSync()
 {
     if (!m_applicationActive || !m_networkAvailable || !m_authService || !m_syncCoordinator) {
-        return;
+        return false;
     }
 
     const std::optional<DLAuthSession> session = m_authService->currentSession();
     if (!session.has_value() || !session->hasSessionCredentials() || !session->hasRegisteredDevice()) {
-        return;
+        return false;
     }
 
     if (m_syncCoordinator->syncInProgress()) {
         m_syncRequestedDuringCycle = true;
-        return;
+        return true;
     }
 
     m_syncRequestedDuringCycle = false;
-    m_syncCoordinator->startSync(session.value());
+    if (!m_syncCoordinator->startSync(session.value())) {
+        setLastError(m_syncCoordinator->lastError());
+        return false;
+    }
+    return true;
 }
 
 void DLAppStateManager::handleSyncFinished(bool success)

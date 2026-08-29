@@ -293,6 +293,25 @@ DLAppPage {
     }
 
     SettingsSectionCard {
+        title: "Synchronization"
+
+        ActionRow {
+            label: "Manual sync"
+            value: "Diagnostic fallback"
+            iconText: "SY"
+            buttonText: "Sync"
+
+            onTriggered: {
+                if (appStateManager.requestManualSync()) {
+                    root.showStatus("Sync requested.", false)
+                } else {
+                    root.showStatus(appStateManager.lastError || "Sync unavailable.", true)
+                }
+            }
+        }
+    }
+
+    SettingsSectionCard {
         title: "Backup / Import / Export"
 
         ActionRow {

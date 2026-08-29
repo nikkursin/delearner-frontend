@@ -29,6 +29,9 @@ private slots:
     void resumeStartsOneSyncAfterInactiveStartup();
     void networkRestorationStartsOneSyncAfterOfflineStartup();
     void overlappingResumeAndNetworkRestorationCoalesceOneFollowUpSync();
+    void manualDiagnosticSyncUsesExistingCoordinator();
+    void offlineManualSyncDoesNotBypassNetworkRestoration();
+    void repeatedManualDiagnosticTriggersCoalesceOneFollowUpSync();
 
 private:
     QByteArray m_previousApiBaseUrl;
@@ -328,6 +331,107 @@ void TestAppStateAuthBootstrap::overlappingResumeAndNetworkRestorationCoalesceOn
     manager.setNetworkAvailable(true);
     manager.setNetworkAvailable(true);
 
+    QVERIFY(!server.waitForNewConnection(100));
+
+    writeEmptyPullResponse(firstPullSocket.get());
+
+    QTRY_VERIFY(server.hasPendingConnections());
+    std::unique_ptr<QTcpSocket> followUpPullSocket(server.nextPendingConnection());
+    const QByteArray followUpPullRequest = readHttpRequest(followUpPullSocket.get());
+    QVERIFY(followUpPullRequest.startsWith("GET /events?after=0 "));
+    writeEmptyPullResponse(followUpPullSocket.get());
+
+    QVERIFY(!server.waitForNewConnection(100));
+}
+
+void TestAppStateAuthBootstrap::manualDiagnosticSyncUsesExistingCoordinator()
+{
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    qputenv("DELEARNER_API_BASE_URL", QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort()).toUtf8());
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString databasePath = dir.filePath(QStringLiteral("delearner.sqlite"));
+
+    DLAuthSessionStore store(QStringLiteral("%1.auth.json").arg(databasePath));
+    QVERIFY2(store.saveSuccessfulSession(registeredSession()), qPrintable(store.lastError()));
+
+    DLAppStateManager manager;
+    manager.init(databasePath);
+
+    QTRY_VERIFY(server.hasPendingConnections());
+    std::unique_ptr<QTcpSocket> startupPullSocket(server.nextPendingConnection());
+    QVERIFY(readHttpRequest(startupPullSocket.get()).startsWith("GET /events?after=0 "));
+    writeEmptyPullResponse(startupPullSocket.get());
+
+    QVERIFY(manager.requestManualSync());
+
+    QTRY_VERIFY(server.hasPendingConnections());
+    std::unique_ptr<QTcpSocket> manualPullSocket(server.nextPendingConnection());
+    const QByteArray manualPullRequest = readHttpRequest(manualPullSocket.get());
+    QVERIFY(manualPullRequest.startsWith("GET /events?after=0 "));
+    QVERIFY(manualPullRequest.toLower().contains("authorization: bearer cached-token"));
+    writeEmptyPullResponse(manualPullSocket.get());
+
+    QVERIFY(!server.waitForNewConnection(100));
+}
+
+void TestAppStateAuthBootstrap::offlineManualSyncDoesNotBypassNetworkRestoration()
+{
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    qputenv("DELEARNER_API_BASE_URL", QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort()).toUtf8());
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString databasePath = dir.filePath(QStringLiteral("delearner.sqlite"));
+
+    DLAuthSessionStore store(QStringLiteral("%1.auth.json").arg(databasePath));
+    QVERIFY2(store.saveSuccessfulSession(registeredSession()), qPrintable(store.lastError()));
+
+    DLAppStateManager manager;
+    manager.setNetworkAvailable(false);
+    manager.init(databasePath);
+
+    QVERIFY(!manager.requestManualSync());
+    QCOMPARE(manager.lastError(), QStringLiteral("Sync is unavailable while offline, inactive or unauthenticated."));
+    QVERIFY(!server.waitForNewConnection(100));
+
+    manager.setNetworkAvailable(true);
+
+    QTRY_VERIFY(server.hasPendingConnections());
+    std::unique_ptr<QTcpSocket> pullSocket(server.nextPendingConnection());
+    const QByteArray pullRequest = readHttpRequest(pullSocket.get());
+    QVERIFY(pullRequest.startsWith("GET /events?after=0 "));
+    writeEmptyPullResponse(pullSocket.get());
+
+    QVERIFY(!server.waitForNewConnection(100));
+}
+
+void TestAppStateAuthBootstrap::repeatedManualDiagnosticTriggersCoalesceOneFollowUpSync()
+{
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    qputenv("DELEARNER_API_BASE_URL", QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort()).toUtf8());
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString databasePath = dir.filePath(QStringLiteral("delearner.sqlite"));
+
+    DLAuthSessionStore store(QStringLiteral("%1.auth.json").arg(databasePath));
+    QVERIFY2(store.saveSuccessfulSession(registeredSession()), qPrintable(store.lastError()));
+
+    DLAppStateManager manager;
+    manager.init(databasePath);
+
+    QTRY_VERIFY(server.hasPendingConnections());
+    std::unique_ptr<QTcpSocket> firstPullSocket(server.nextPendingConnection());
+    const QByteArray firstPullRequest = readHttpRequest(firstPullSocket.get());
+    QVERIFY(firstPullRequest.startsWith("GET /events?after=0 "));
+
+    QVERIFY(manager.requestManualSync());
+    QVERIFY(manager.requestManualSync());
     QVERIFY(!server.waitForNewConnection(100));
 
     writeEmptyPullResponse(firstPullSocket.get());
