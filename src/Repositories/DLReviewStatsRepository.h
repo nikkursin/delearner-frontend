@@ -4,6 +4,7 @@
 #include "../Models/DLWordReviewStats.h"
 
 class DLDatabaseManager;
+class QSqlDatabase;
 class QString;
 
 class DLReviewStatsRepository
@@ -18,7 +19,7 @@ public:
 
 private:
     bool incrementAnswer(const QString& wordSyncId, const QString& columnName);
-    int localWordIdForSyncId(const QString& wordSyncId);
+    int localWordIdForSyncId(QSqlDatabase& db, QString* error, const QString& wordSyncId);
 
     DLDatabaseManager& m_database;
 };

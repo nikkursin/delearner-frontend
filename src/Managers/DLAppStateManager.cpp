@@ -67,6 +67,12 @@ void DLAppStateManager::init(const QString& databasePath)
 
 bool DLAppStateManager::openFreeCore()
 {
+    if (m_authService && m_authService->hasRegisteredDevice()) {
+        DLDatabaseManager::instance().setSyncContext(m_authService->userId(), m_authService->deviceId());
+    } else {
+        DLDatabaseManager::instance().clearSyncContext();
+    }
+
     if (!DLDatabaseManager::instance().openDatabase(m_databasePath)) {
         setLastError(DLDatabaseManager::instance().lastError());
         qCCritical(dlApp) << "App initialization failed:" << m_lastError;

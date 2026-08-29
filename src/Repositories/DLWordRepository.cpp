@@ -8,6 +8,35 @@
 #include "DLDatabaseManager.h"
 #include "DLLogging.h"
 #include "../Models/DLModelMappers.h"
+#include "../Sync/DLSyncEventSerializer.h"
+
+namespace {
+DLSyncEventEnvelope wordEvent(const DLWord& word, const QString& operation)
+{
+    DLSyncEventEnvelope event;
+    event.entityType = QStringLiteral("word");
+    event.entityId = word.syncId;
+    event.operation = operation;
+    event.updatedAt = word.updatedAt;
+    event.payload = DLSyncEventSerializer::payloadForWord(word, QString());
+    return event;
+}
+
+DLSyncEventEnvelope wordDeleteEvent(const QString& syncId, qint64 deletedAt)
+{
+    DLSyncEventEnvelope event;
+    event.entityType = QStringLiteral("word");
+    event.entityId = syncId;
+    event.operation = QStringLiteral("delete");
+    event.updatedAt = deletedAt;
+    event.tombstone = DLSyncEventSerializer::tombstoneForEntity(
+        event.entityType,
+        syncId,
+        QString(),
+        deletedAt);
+    return event;
+}
+}
 
 DLWordRepository::DLWordRepository(DLDatabaseManager& database)
     : m_database(database)
@@ -138,7 +167,25 @@ QString DLWordRepository::insertWord(const DLWord& word)
         phraseCandidate.syncId = syncId;
         phraseCandidate.groupId = groupId;
         phraseCandidate.groupSyncId = groupSyncId;
-        return createPhraseFromExample(db, error, phraseCandidate);
+        phraseCandidate.normalizedGermanWord = DLDatabaseManager::normalizedText(word.germanWord);
+        phraseCandidate.normalizedNativeTranslation = DLDatabaseManager::normalizedText(word.nativeTranslation);
+        phraseCandidate.partOfSpeech = word.partOfSpeech.trimmed().isEmpty() ? QStringLiteral("Andere") : word.partOfSpeech.trimmed();
+        phraseCandidate.createdAt = now;
+        phraseCandidate.updatedAt = now;
+
+        DLWord createdPhrase;
+        if (!createPhraseFromExample(db, error, phraseCandidate, &createdPhrase)) {
+            return false;
+        }
+        if (!m_database.recordSyncOutboxEvent(db, error, wordEvent(phraseCandidate, QStringLiteral("create")))) {
+            return false;
+        }
+        if (createdPhrase.id >= 0
+            && !m_database.recordSyncOutboxEvent(db, error, wordEvent(createdPhrase, QStringLiteral("create")))) {
+            return false;
+        }
+
+        return true;
     });
 
     if (!ok) {
@@ -177,6 +224,8 @@ bool DLWordRepository::updateWord(const DLWord& word)
             return false;
         }
 
+        const qint64 now = DLDatabaseManager::currentUnixTime();
+
         QSqlQuery query(db);
         query.prepare(QStringLiteral(R"(
             UPDATE words SET
@@ -206,7 +255,7 @@ bool DLWordRepository::updateWord(const DLWord& word)
         query.bindValue(QStringLiteral(":group_id"), groupId >= 0 ? QVariant(groupId) : DLDatabaseManager::nullVariant());
         query.bindValue(QStringLiteral(":group_sync_id"), groupId >= 0 ? QVariant(word.groupSyncId.trimmed()) : DLDatabaseManager::nullVariant());
         query.bindValue(QStringLiteral(":notes"), word.notes.trimmed().isEmpty() ? DLDatabaseManager::nullVariant() : QVariant(word.notes.trimmed()));
-        query.bindValue(QStringLiteral(":updated_at"), DLDatabaseManager::currentUnixTime());
+        query.bindValue(QStringLiteral(":updated_at"), now);
 
         if (!bindAndExec(query, error) || !saveForms(db, error, wordId, word)) {
             return false;
@@ -216,7 +265,26 @@ bool DLWordRepository::updateWord(const DLWord& word)
         DLWord phraseCandidate = word;
         phraseCandidate.id = wordId;
         phraseCandidate.groupId = groupId;
-        return wasPhrase ? true : createPhraseFromExample(db, error, phraseCandidate);
+        phraseCandidate.groupSyncId = groupId >= 0 ? word.groupSyncId.trimmed() : QString();
+        phraseCandidate.normalizedGermanWord = DLDatabaseManager::normalizedText(word.germanWord);
+        phraseCandidate.normalizedNativeTranslation = DLDatabaseManager::normalizedText(word.nativeTranslation);
+        phraseCandidate.partOfSpeech = word.partOfSpeech.trimmed().isEmpty() ? QStringLiteral("Andere") : word.partOfSpeech.trimmed();
+        phraseCandidate.createdAt = current.createdAt;
+        phraseCandidate.updatedAt = now;
+
+        DLWord createdPhrase;
+        if (!wasPhrase && !createPhraseFromExample(db, error, phraseCandidate, &createdPhrase)) {
+            return false;
+        }
+        if (!m_database.recordSyncOutboxEvent(db, error, wordEvent(phraseCandidate, QStringLiteral("update")))) {
+            return false;
+        }
+        if (createdPhrase.id >= 0
+            && !m_database.recordSyncOutboxEvent(db, error, wordEvent(createdPhrase, QStringLiteral("create")))) {
+            return false;
+        }
+
+        return true;
     });
     if (!success) {
         qCWarning(dlRepo) << "Failed to update word" << word.syncId << ":" << m_database.lastError();
@@ -226,20 +294,36 @@ bool DLWordRepository::updateWord(const DLWord& word)
 
 bool DLWordRepository::deleteWord(const QString& syncId)
 {
-    const qint64 now = DLDatabaseManager::currentUnixTime();
-    const bool success = m_database.executeSql(
-        QStringLiteral(R"(
+    const bool success = m_database.transaction([&](QSqlDatabase& db, QString* error) {
+        const qint64 now = DLDatabaseManager::currentUnixTime();
+        const int wordId = localWordIdForSyncId(db, error, syncId);
+        if (wordId < 0) {
+            return false;
+        }
+
+        QSqlQuery query(db);
+        query.prepare(QStringLiteral(R"(
             UPDATE words
             SET deleted_at = :deleted_at,
                 updated_at = :updated_at
             WHERE sync_id = :sync_id
               AND deleted_at IS NULL;
-        )"),
-        {
-            { QStringLiteral(":sync_id"), syncId },
-            { QStringLiteral(":deleted_at"), now },
-            { QStringLiteral(":updated_at"), now }
-        });
+        )"));
+        query.bindValue(QStringLiteral(":sync_id"), syncId);
+        query.bindValue(QStringLiteral(":deleted_at"), now);
+        query.bindValue(QStringLiteral(":updated_at"), now);
+        if (!bindAndExec(query, error)) {
+            return false;
+        }
+        if (query.numRowsAffected() <= 0) {
+            if (error) {
+                *error = QStringLiteral("Word not found.");
+            }
+            return false;
+        }
+
+        return m_database.recordSyncOutboxEvent(db, error, wordDeleteEvent(syncId, now));
+    });
     if (!success) {
         qCWarning(dlRepo) << "Failed to delete word" << syncId << ":" << m_database.lastError();
     }
@@ -477,8 +561,11 @@ bool DLWordRepository::saveForms(QSqlDatabase& db, QString* error, int wordId, c
     return true;
 }
 
-bool DLWordRepository::createPhraseFromExample(QSqlDatabase& db, QString* error, const DLWord& word)
+bool DLWordRepository::createPhraseFromExample(QSqlDatabase& db, QString* error, const DLWord& word, DLWord* createdPhrase)
 {
+    if (createdPhrase) {
+        *createdPhrase = DLWord();
+    }
     if (word.partOfSpeech.compare(QStringLiteral("Phrase"), Qt::CaseInsensitive) == 0) {
         return true;
     }
@@ -543,6 +630,7 @@ bool DLWordRepository::createPhraseFromExample(QSqlDatabase& db, QString* error,
     if (!bindAndExec(phrase, error)) {
         return false;
     }
+    const int phraseId = phrase.lastInsertId().toInt();
 
     QSqlQuery stats(db);
     stats.prepare(QStringLiteral(R"(
@@ -551,10 +639,30 @@ bool DLWordRepository::createPhraseFromExample(QSqlDatabase& db, QString* error,
              ease_factor, interval_days, due_at, updated_at)
         VALUES (:word_id, :word_sync_id, 0, 0, NULL, 2.5, 0, NULL, :updated_at);
     )"));
-    stats.bindValue(QStringLiteral(":word_id"), phrase.lastInsertId().toInt());
+    stats.bindValue(QStringLiteral(":word_id"), phraseId);
     stats.bindValue(QStringLiteral(":word_sync_id"), phraseSyncId);
     stats.bindValue(QStringLiteral(":updated_at"), now);
-    return bindAndExec(stats, error);
+    if (!bindAndExec(stats, error)) {
+        return false;
+    }
+
+    if (createdPhrase) {
+        DLWord phraseWord;
+        phraseWord.id = phraseId;
+        phraseWord.syncId = phraseSyncId;
+        phraseWord.germanWord = phraseGerman;
+        phraseWord.normalizedGermanWord = DLDatabaseManager::normalizedText(phraseGerman);
+        phraseWord.partOfSpeech = QStringLiteral("Phrase");
+        phraseWord.nativeTranslation = phraseNative;
+        phraseWord.normalizedNativeTranslation = DLDatabaseManager::normalizedText(phraseNative);
+        phraseWord.groupId = word.groupId;
+        phraseWord.groupSyncId = groupSyncId;
+        phraseWord.createdAt = now;
+        phraseWord.updatedAt = now;
+        *createdPhrase = phraseWord;
+    }
+
+    return true;
 }
 
 bool DLWordRepository::bindAndExec(QSqlQuery& query, QString* error)

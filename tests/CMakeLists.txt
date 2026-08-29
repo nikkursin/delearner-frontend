@@ -5,6 +5,7 @@ set(DELEARNER_TESTS
     TestReviewStatsRepository
     TestQuizRepository
     TestSyncEventSerializer
+    TestTransactionalOutbox
     TestAuthSessionStore
     TestDeviceIdentityAndSyncContext
 )

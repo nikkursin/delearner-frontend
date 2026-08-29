@@ -1,11 +1,11 @@
 #include "DLDatabaseManager.h"
 
 #include <QDateTime>
+#include <QMutexLocker>
+#include <QSet>
 #include <QSqlError>
 #include <QSqlQuery>
 #include <QSqlRecord>
-#include <QMutexLocker>
-#include <QSet>
 #include <QStringList>
 #include <QUuid>
 
@@ -875,6 +875,110 @@ int DLDatabaseManager::selectInt(const QString& sql, const QVariantMap& args, in
 
     m_lastError.clear();
     return query.next() ? query.value(0).toInt() : fallback;
+}
+
+void DLDatabaseManager::setSyncContext(const QString& userId, const QString& deviceId)
+{
+    QMutexLocker locker(&m_mutex);
+    m_syncUserId = userId.trimmed();
+    m_syncDeviceId = deviceId.trimmed();
+}
+
+void DLDatabaseManager::clearSyncContext()
+{
+    QMutexLocker locker(&m_mutex);
+    m_syncUserId.clear();
+    m_syncDeviceId.clear();
+    m_failAfterNextSyncOutboxWriteForTesting = false;
+}
+
+bool DLDatabaseManager::hasSyncContext() const
+{
+    QMutexLocker locker(&m_mutex);
+    return !QUuid(m_syncUserId).isNull() && !QUuid(m_syncDeviceId).isNull();
+}
+
+bool DLDatabaseManager::recordSyncOutboxEvent(QSqlDatabase& db, QString* error, DLSyncEventEnvelope event)
+{
+    if (QUuid(m_syncUserId).isNull() || QUuid(m_syncDeviceId).isNull()) {
+        if (error) {
+            *error = QStringLiteral("Sync outbox requires authenticated user and registered device context.");
+        }
+        return false;
+    }
+
+    event.contractVersion = DLSyncEventSerializer::contractVersion();
+    event.eventId = event.eventId.trimmed().isEmpty()
+        ? QUuid::createUuid().toString(QUuid::WithoutBraces)
+        : event.eventId.trimmed();
+    event.deviceId = m_syncDeviceId;
+    event.authenticatedUserId = m_syncUserId;
+    if (event.operation == QStringLiteral("delete")) {
+        event.tombstone.insert(QStringLiteral("ownerUserId"), m_syncUserId);
+    } else {
+        event.payload.insert(QStringLiteral("ownerUserId"), m_syncUserId);
+    }
+
+    QString serializationError;
+    const QByteArray envelopeJson = DLSyncEventSerializer::serializeContractJson(event, &serializationError);
+    if (envelopeJson.isEmpty()) {
+        if (error) {
+            *error = serializationError;
+        }
+        return false;
+    }
+
+    const QByteArray payloadJson = DLSyncEventSerializer::serializeBodyJson(event, &serializationError);
+    if (payloadJson.isEmpty()) {
+        if (error) {
+            *error = serializationError;
+        }
+        return false;
+    }
+
+    QSqlQuery query(db);
+    query.prepare(QStringLiteral(R"(
+        INSERT INTO sync_outbox_events
+            (event_id, contract_version, device_id, entity_type, entity_id, operation,
+             updated_at, envelope_json, payload_json, created_at)
+        VALUES
+            (:event_id, :contract_version, :device_id, :entity_type, :entity_id, :operation,
+             :updated_at, :envelope_json, :payload_json, :created_at);
+    )"));
+    query.bindValue(QStringLiteral(":event_id"), event.eventId);
+    query.bindValue(QStringLiteral(":contract_version"), event.contractVersion);
+    query.bindValue(QStringLiteral(":device_id"), event.deviceId);
+    query.bindValue(QStringLiteral(":entity_type"), event.entityType);
+    query.bindValue(QStringLiteral(":entity_id"), event.entityId);
+    query.bindValue(QStringLiteral(":operation"), event.operation);
+    query.bindValue(QStringLiteral(":updated_at"), event.updatedAt);
+    query.bindValue(QStringLiteral(":envelope_json"), QString::fromUtf8(envelopeJson));
+    query.bindValue(QStringLiteral(":payload_json"), QString::fromUtf8(payloadJson));
+    query.bindValue(QStringLiteral(":created_at"), DLDatabaseManager::currentUnixTime());
+
+    if (!query.exec()) {
+        if (error) {
+            *error = query.lastError().text();
+        }
+        logSqlFailure("syncOutbox/insert", query.lastQuery(), {}, {}, {}, query.lastError());
+        return false;
+    }
+
+    if (m_failAfterNextSyncOutboxWriteForTesting) {
+        m_failAfterNextSyncOutboxWriteForTesting = false;
+        if (error) {
+            *error = QStringLiteral("Injected sync outbox failure after write.");
+        }
+        return false;
+    }
+
+    return true;
+}
+
+void DLDatabaseManager::failAfterNextSyncOutboxWriteForTesting()
+{
+    QMutexLocker locker(&m_mutex);
+    m_failAfterNextSyncOutboxWriteForTesting = true;
 }
 
 bool DLDatabaseManager::transaction(const std::function<bool(QSqlDatabase&, QString*)>& callback)

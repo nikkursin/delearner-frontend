@@ -6,6 +6,7 @@
 #include <QSqlQuery>
 #include <QUuid>
 
+#include "DLTestSupport.h"
 #include "Managers/DLDatabaseManager.h"
 
 class TestDatabaseManager : public QObject
@@ -48,10 +49,12 @@ void TestDatabaseManager::init()
     DLDatabaseManager::instance().closeDatabase();
     QVERIFY2(DLDatabaseManager::instance().openDatabase(m_dbPath),
              qPrintable(DLDatabaseManager::instance().lastError()));
+    DLTestSupport::installSyncContext();
 }
 
 void TestDatabaseManager::cleanup()
 {
+    DLDatabaseManager::instance().clearSyncContext();
     DLDatabaseManager::instance().closeDatabase();
     QFile::remove(m_dbPath);
 }
@@ -358,6 +361,7 @@ void TestDatabaseManager::openDatabaseMigratesLegacySchema()
 
     QVERIFY2(DLDatabaseManager::instance().openDatabase(m_dbPath),
              qPrintable(DLDatabaseManager::instance().lastError()));
+    DLTestSupport::installSyncContext();
 
     const QVariantList groups = DLDatabaseManager::instance().fetchAllGroups();
     QCOMPARE(groups.size(), 1);

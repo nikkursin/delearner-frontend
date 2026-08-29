@@ -4,6 +4,7 @@
 #include <QFile>
 #include <QUuid>
 
+#include "DLTestSupport.h"
 #include "Managers/DLDatabaseManager.h"
 #include "Models/DLWordGroup.h"
 #include "Repositories/DLGroupRepository.h"
@@ -35,10 +36,12 @@ void TestGroupRepository::init()
     DLDatabaseManager::instance().closeDatabase();
     QVERIFY2(DLDatabaseManager::instance().openDatabase(m_dbPath),
              qPrintable(DLDatabaseManager::instance().lastError()));
+    DLTestSupport::installSyncContext();
 }
 
 void TestGroupRepository::cleanup()
 {
+    DLDatabaseManager::instance().clearSyncContext();
     DLDatabaseManager::instance().closeDatabase();
     QFile::remove(m_dbPath);
 }

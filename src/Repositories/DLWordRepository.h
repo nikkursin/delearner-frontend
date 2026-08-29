@@ -34,7 +34,7 @@ private:
     int localWordIdForSyncId(QSqlDatabase& db, QString* error, const QString& syncId);
     int localGroupIdForSyncId(QSqlDatabase& db, QString* error, const QString& syncId);
     bool saveForms(QSqlDatabase& db, QString* error, int wordId, const DLWord& word);
-    bool createPhraseFromExample(QSqlDatabase& db, QString* error, const DLWord& word);
+    bool createPhraseFromExample(QSqlDatabase& db, QString* error, const DLWord& word, DLWord* createdPhrase = nullptr);
     bool bindAndExec(QSqlQuery& query, QString* error);
 
     DLDatabaseManager& m_database;

@@ -11,6 +11,8 @@
 #include <QVariantList>
 #include <QVariantMap>
 
+#include "Sync/DLSyncEventSerializer.h"
+
 struct DLSqlCommand
 {
     QString sql;
@@ -47,6 +49,11 @@ public:
     QVariantMap selectOneRow(const QString& sql, const QVariantMap& args = {});
     int selectInt(const QString& sql, const QVariantMap& args = {}, int fallback = 0);
     bool transaction(const std::function<bool(QSqlDatabase&, QString*)>& callback);
+    void setSyncContext(const QString& userId, const QString& deviceId);
+    void clearSyncContext();
+    bool hasSyncContext() const;
+    bool recordSyncOutboxEvent(QSqlDatabase& db, QString* error, DLSyncEventEnvelope event);
+    void failAfterNextSyncOutboxWriteForTesting();
 
     static qint64 currentUnixTime();
     static QString normalizedText(const QString& value);
@@ -123,6 +130,9 @@ private:
     QSqlDatabase m_db;
     QString m_lastError;
     QString m_connectionName;
+    QString m_syncUserId;
+    QString m_syncDeviceId;
+    bool m_failAfterNextSyncOutboxWriteForTesting = false;
 };
 
 #endif // DLDATABASEMANAGER_H
