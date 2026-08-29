@@ -4,6 +4,7 @@
 #include <QSqlDatabase>
 #include <QSqlError>
 #include <QSqlQuery>
+#include <QStringList>
 #include <QVariant>
 
 #include "Managers/DLDatabaseManager.h"
@@ -282,6 +283,35 @@ bool DLRemoteChangeReconciler::applyRemoteEventsAndAdvanceCursor(const QList<DLS
     return success;
 }
 
+bool DLRemoteChangeReconciler::replaceLocalStateWithRemoteEventsAndAdvanceCursor(const QList<DLSyncEventEnvelope>& events,
+                                                                                 qint64 consumedSequence,
+                                                                                 QString* error)
+{
+    if (consumedSequence < 0) {
+        setError(error, QStringLiteral("Remote cursor must be non-negative."));
+        return false;
+    }
+
+    const bool success = m_database.transaction([&](QSqlDatabase& db, QString* transactionError) {
+        if (!localOutboxIsEmpty(db, transactionError)
+            || !clearLocalSyncableState(db, transactionError)) {
+            return false;
+        }
+
+        for (const DLSyncEventEnvelope& event : events) {
+            if (!applyRemoteEventInTransaction(db, event, transactionError)) {
+                return false;
+            }
+        }
+
+        return recordRemoteCursor(db, consumedSequence, transactionError);
+    });
+    if (!success) {
+        setError(error, m_database.lastError());
+    }
+    return success;
+}
+
 bool DLRemoteChangeReconciler::applyRemoteEventInTransaction(QSqlDatabase& db,
                                                             const DLSyncEventEnvelope& event,
                                                             QString* error)
@@ -311,6 +341,48 @@ bool DLRemoteChangeReconciler::recordRemoteCursor(QSqlDatabase& db, qint64 consu
     query.bindValue(QStringLiteral(":consumed_sequence"), consumedSequence);
     query.bindValue(QStringLiteral(":updated_at"), DLDatabaseManager::currentUnixTime());
     return execQuery(query, error);
+}
+
+bool DLRemoteChangeReconciler::localOutboxIsEmpty(QSqlDatabase& db, QString* error)
+{
+    QSqlQuery query(db);
+    query.prepare(QStringLiteral("SELECT COUNT(*) FROM sync_outbox_events;"));
+    if (!execQuery(query, error)) {
+        return false;
+    }
+    if (!query.next()) {
+        setError(error, QStringLiteral("Could not inspect local sync outbox."));
+        return false;
+    }
+    if (query.value(0).toInt() > 0) {
+        setError(error, QStringLiteral("Bootstrap restore requires an empty pending sync outbox."));
+        return false;
+    }
+    return true;
+}
+
+bool DLRemoteChangeReconciler::clearLocalSyncableState(QSqlDatabase& db, QString* error)
+{
+    const QStringList statements = {
+        QStringLiteral("DELETE FROM adjective_forms;"),
+        QStringLiteral("DELETE FROM verb_forms;"),
+        QStringLiteral("DELETE FROM noun_forms;"),
+        QStringLiteral("DELETE FROM word_review_stats;"),
+        QStringLiteral("DELETE FROM words;"),
+        QStringLiteral("DELETE FROM groups;"),
+        QStringLiteral("DELETE FROM sync_acknowledged_event_diagnostics;"),
+        QStringLiteral("DELETE FROM sync_pull_cursor;")
+    };
+
+    for (const QString& statement : statements) {
+        QSqlQuery query(db);
+        if (!query.exec(statement)) {
+            setError(error, query.lastError().text());
+            return false;
+        }
+    }
+
+    return true;
 }
 
 bool DLRemoteChangeReconciler::applyPayloadEvent(QSqlDatabase& db, const DLSyncEventEnvelope& event, QString* error)

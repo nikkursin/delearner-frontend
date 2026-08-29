@@ -79,6 +79,8 @@ set(DELEARNER_CORE_SOURCES
     src/Services/DLWordService.h
     src/Sync/DLDeviceIdentityStore.cpp
     src/Sync/DLDeviceIdentityStore.h
+    src/Sync/DLBootstrapStateRestorer.cpp
+    src/Sync/DLBootstrapStateRestorer.h
     src/Sync/DLRemoteChangeReconciler.cpp
     src/Sync/DLRemoteChangeReconciler.h
     src/Sync/DLSyncRequestBuilder.cpp
