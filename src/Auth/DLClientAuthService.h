@@ -9,6 +9,7 @@
 
 #include "DLAuthSession.h"
 #include "DLAuthSessionStore.h"
+#include "Sync/DLDeviceIdentityStore.h"
 
 class QNetworkAccessManager;
 class QNetworkReply;
@@ -39,8 +40,10 @@ public:
     QString sessionToken() const;
     QString userId() const;
     QString email() const;
+    QString deviceId() const;
     bool hasPriorSuccessfulAuthentication() const;
     bool hasSessionCredentials() const;
+    bool hasRegisteredDevice() const;
     bool canUseFreeCoreOffline() const;
 
     StartupState startupState(bool networkAvailable) const;
@@ -57,10 +60,14 @@ signals:
 private:
     void submitEmailPassword(const QString& path, const QString& email, const QString& password);
     void handleAuthReply(QNetworkReply* reply, const QString& email);
+    void registerAuthenticatedDevice(const DLAuthSession& session);
+    void handleDeviceRegistrationReply(QNetworkReply* reply, DLAuthSession session);
+    QString defaultDeviceDisplayName() const;
     std::optional<DLAuthSession> currentSession() const;
     void setLastError(const QString& error);
 
     DLAuthSessionStore m_store;
+    DLDeviceIdentityStore m_deviceIdentityStore;
     QUrl m_apiBaseUrl;
     std::unique_ptr<QNetworkAccessManager> m_network;
     QString m_lastError;

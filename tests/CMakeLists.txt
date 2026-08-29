@@ -6,6 +6,7 @@ set(DELEARNER_TESTS
     TestQuizRepository
     TestSyncEventSerializer
     TestAuthSessionStore
+    TestDeviceIdentityAndSyncContext
 )
 
 foreach(test_name IN LISTS DELEARNER_TESTS)

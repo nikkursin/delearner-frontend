@@ -62,6 +62,8 @@ std::optional<DLAuthSession> DLAuthSessionStore::load() const
     session.email = object.value(QStringLiteral("email")).toString();
     session.sessionToken = object.value(QStringLiteral("sessionToken")).toString();
     session.tokenType = object.value(QStringLiteral("tokenType")).toString(QStringLiteral("Bearer"));
+    session.deviceId = object.value(QStringLiteral("deviceId")).toString();
+    session.deviceDisplayName = object.value(QStringLiteral("deviceDisplayName")).toString();
     session.lastAuthenticatedAtUtc = dateFromString(object.value(QStringLiteral("lastAuthenticatedAtUtc")).toString());
     session.priorSuccessfulAuthentication =
         object.value(QStringLiteral("priorSuccessfulAuthentication")).toBool(false);
@@ -141,6 +143,8 @@ bool DLAuthSessionStore::writeSession(const DLAuthSession& session)
     object.insert(QStringLiteral("email"), session.email);
     object.insert(QStringLiteral("sessionToken"), session.sessionToken);
     object.insert(QStringLiteral("tokenType"), session.tokenType);
+    object.insert(QStringLiteral("deviceId"), session.deviceId);
+    object.insert(QStringLiteral("deviceDisplayName"), session.deviceDisplayName);
     object.insert(QStringLiteral("lastAuthenticatedAtUtc"), dateToString(session.lastAuthenticatedAtUtc));
     object.insert(QStringLiteral("priorSuccessfulAuthentication"), session.priorSuccessfulAuthentication);
 

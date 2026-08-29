@@ -10,11 +10,15 @@ struct DLAuthSession
     QString email;
     QString sessionToken;
     QString tokenType = QStringLiteral("Bearer");
+    QString deviceId;
+    QString deviceDisplayName;
     QDateTime lastAuthenticatedAtUtc;
     bool priorSuccessfulAuthentication = false;
 
     bool hasSessionCredentials() const;
     bool allowsOfflineFreeCore() const;
+    bool hasRegisteredDevice() const;
+    QString authorizationHeader() const;
 };
 
 #endif // DLAUTHSESSION_H

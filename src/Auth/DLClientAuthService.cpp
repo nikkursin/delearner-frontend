@@ -6,8 +6,10 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QSysInfo>
 #include <QUrl>
 #include <QtGlobal>
+#include <QUuid>
 #include <utility>
 
 namespace {
@@ -18,11 +20,18 @@ QUrl resolvedUrl(QUrl baseUrl, const QString& path)
     }
     return baseUrl.resolved(QUrl(path.startsWith(QLatin1Char('/')) ? path.mid(1) : path));
 }
+
+QString normalizedUuid(const QString& value)
+{
+    const QUuid uuid(value.trimmed());
+    return uuid.isNull() ? QString() : uuid.toString(QUuid::WithoutBraces);
+}
 }
 
 DLClientAuthService::DLClientAuthService(QString storagePath, QUrl apiBaseUrl, QObject* parent)
     : QObject(parent)
     , m_store(std::move(storagePath))
+    , m_deviceIdentityStore(QStringLiteral("%1.device.json").arg(m_store.storagePath()))
     , m_apiBaseUrl(std::move(apiBaseUrl))
     , m_network(std::make_unique<QNetworkAccessManager>())
 {
@@ -79,6 +88,12 @@ QString DLClientAuthService::email() const
     return session.has_value() ? session->email : QString();
 }
 
+QString DLClientAuthService::deviceId() const
+{
+    const std::optional<DLAuthSession> session = currentSession();
+    return session.has_value() ? session->deviceId : QString();
+}
+
 bool DLClientAuthService::hasPriorSuccessfulAuthentication() const
 {
     const std::optional<DLAuthSession> session = currentSession();
@@ -89,6 +104,12 @@ bool DLClientAuthService::hasSessionCredentials() const
 {
     const std::optional<DLAuthSession> session = currentSession();
     return session.has_value() && session->hasSessionCredentials();
+}
+
+bool DLClientAuthService::hasRegisteredDevice() const
+{
+    const std::optional<DLAuthSession> session = currentSession();
+    return session.has_value() && session->hasRegisteredDevice();
 }
 
 bool DLClientAuthService::canUseFreeCoreOffline() const
@@ -183,6 +204,69 @@ void DLClientAuthService::handleAuthReply(QNetworkReply* reply, const QString& e
     session.lastAuthenticatedAtUtc = QDateTime::currentDateTimeUtc();
     session.priorSuccessfulAuthentication = true;
 
+    if (!session.hasSessionCredentials()) {
+        setLastError(QStringLiteral("Authentication response did not include valid session credentials."));
+        emit authFailed(m_lastError);
+        return;
+    }
+
+    registerAuthenticatedDevice(session);
+}
+
+void DLClientAuthService::registerAuthenticatedDevice(const DLAuthSession& session)
+{
+    const QString deviceId = m_deviceIdentityStore.deviceId();
+    if (deviceId.isEmpty()) {
+        setLastError(m_deviceIdentityStore.lastError());
+        emit authFailed(m_lastError);
+        return;
+    }
+
+    QJsonObject body;
+    body.insert(QStringLiteral("deviceId"), deviceId);
+    body.insert(QStringLiteral("displayName"), defaultDeviceDisplayName());
+
+    QNetworkRequest request(resolvedUrl(m_apiBaseUrl, QStringLiteral("/api/v1/devices/register")));
+    request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+    request.setRawHeader("Authorization", session.authorizationHeader().toUtf8());
+
+    QNetworkReply* reply = m_network->post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
+    connect(reply, &QNetworkReply::finished, this, [this, reply, session]() {
+        handleDeviceRegistrationReply(reply, session);
+    });
+}
+
+void DLClientAuthService::handleDeviceRegistrationReply(QNetworkReply* reply, DLAuthSession session)
+{
+    const std::unique_ptr<QNetworkReply, void (*)(QNetworkReply*)> replyGuard(
+        reply,
+        [](QNetworkReply* guardedReply) { guardedReply->deleteLater(); });
+
+    if (reply->error() != QNetworkReply::NoError) {
+        setLastError(reply->errorString());
+        emit authFailed(m_lastError);
+        return;
+    }
+
+    QJsonParseError parseError;
+    const QJsonDocument document = QJsonDocument::fromJson(reply->readAll(), &parseError);
+    if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
+        setLastError(QStringLiteral("Device registration response was not valid JSON."));
+        emit authFailed(m_lastError);
+        return;
+    }
+
+    const QJsonObject object = document.object();
+    const QString registeredDeviceId = normalizedUuid(object.value(QStringLiteral("deviceId")).toString());
+    if (registeredDeviceId.isEmpty()) {
+        setLastError(QStringLiteral("Device registration response did not include a valid device id."));
+        emit authFailed(m_lastError);
+        return;
+    }
+
+    session.deviceId = registeredDeviceId;
+    session.deviceDisplayName = object.value(QStringLiteral("displayName")).toString();
+
     if (!m_store.saveSuccessfulSession(session)) {
         setLastError(m_store.lastError());
         emit authFailed(m_lastError);
@@ -191,6 +275,12 @@ void DLClientAuthService::handleAuthReply(QNetworkReply* reply, const QString& e
 
     setLastError(QString());
     emit authSucceeded();
+}
+
+QString DLClientAuthService::defaultDeviceDisplayName() const
+{
+    const QString hostName = QSysInfo::machineHostName().trimmed();
+    return hostName.isEmpty() ? QStringLiteral("DE Learner device") : hostName;
 }
 
 std::optional<DLAuthSession> DLClientAuthService::currentSession() const
