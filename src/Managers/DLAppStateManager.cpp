@@ -36,14 +36,23 @@ void DLAppStateManager::init(const QString& databasePath)
     const QString authSessionPath = QStringLiteral("%1.auth.json").arg(databasePath);
     m_authService = std::make_unique<DLClientAuthService>(authSessionPath);
     connect(m_authService.get(), &DLClientAuthService::authSucceeded, this, [this]() {
-        setAuthBusy(false);
+        const bool requiresFreshBootstrap = !QFileInfo::exists(m_databasePath);
         setAuthState(QStringLiteral("authenticated_session"));
         if (!openFreeCore()) {
+            setAuthBusy(false);
             return;
         }
-        setLastError(QString());
-        navigateTo(AddEditWordPage);
-        requestActiveSync();
+        if (requiresFreshBootstrap) {
+            if (startFreshInstallBootstrap()) {
+                return;
+            }
+            setAuthBusy(false);
+            discardFailedFreshInstallBootstrap();
+            setAuthState(QStringLiteral("authentication_required"));
+            navigateTo(AuthPage);
+            return;
+        }
+        enterFreeCoreAfterAuthenticatedStartup(true);
     });
     connect(m_authService.get(), &DLClientAuthService::authFailed, this, [this](const QString& message) {
         setAuthBusy(false);
@@ -52,6 +61,7 @@ void DLAppStateManager::init(const QString& databasePath)
         navigateTo(AuthPage);
     });
 
+    const bool hasLocalDatabase = QFileInfo::exists(m_databasePath);
     if (!m_authService->hasPriorSuccessfulAuthentication()) {
         setAuthState(QStringLiteral("authentication_required"));
         navigateTo(AuthPage);
@@ -63,9 +73,30 @@ void DLAppStateManager::init(const QString& databasePath)
         return;
     }
 
-    setLastError(QString());
-    navigateTo(AddEditWordPage);
-    requestActiveSync();
+    if (!hasLocalDatabase) {
+        if (m_networkAvailable && m_authService->hasSessionCredentials() && m_authService->hasRegisteredDevice()) {
+            setAuthBusy(true);
+            if (startFreshInstallBootstrap()) {
+                return;
+            }
+            setAuthBusy(false);
+            discardFailedFreshInstallBootstrap();
+            setAuthState(QStringLiteral("authentication_required"));
+            navigateTo(AuthPage);
+            return;
+        }
+
+        m_syncCoordinator.reset();
+        DLDatabaseManager::instance().clearSyncContext();
+        DLDatabaseManager::instance().closeDatabase();
+        QFile::remove(m_databasePath);
+        setLastError(QStringLiteral("Initial bootstrap requires an authenticated network connection."));
+        setAuthState(QStringLiteral("authentication_required"));
+        navigateTo(AuthPage);
+        return;
+    }
+
+    enterFreeCoreAfterAuthenticatedStartup(m_networkAvailable);
 }
 
 bool DLAppStateManager::openFreeCore()
@@ -94,6 +125,57 @@ bool DLAppStateManager::openFreeCore()
     }
 
     return true;
+}
+
+void DLAppStateManager::enterFreeCoreAfterAuthenticatedStartup(bool requestInitialSync)
+{
+    setAuthBusy(false);
+    setLastError(QString());
+    navigateTo(AddEditWordPage);
+    if (requestInitialSync) {
+        requestActiveSync();
+    }
+}
+
+bool DLAppStateManager::startFreshInstallBootstrap()
+{
+    if (!m_syncCoordinator || !m_authService || !m_networkAvailable) {
+        setLastError(QStringLiteral("Initial bootstrap requires an authenticated network connection."));
+        return false;
+    }
+
+    const std::optional<DLAuthSession> session = m_authService->currentSession();
+    if (!session.has_value() || !session->hasSessionCredentials() || !session->hasRegisteredDevice()) {
+        setLastError(QStringLiteral("Initial bootstrap requires a registered authenticated session."));
+        return false;
+    }
+
+    m_freshInstallBootstrapInProgress = true;
+    m_freshInstallBootstrapCreatedDatabase = true;
+    m_syncRequestedDuringCycle = false;
+    setAuthState(QStringLiteral("bootstrapping"));
+    navigateTo(StartupLoadingPage);
+    if (!m_syncCoordinator->startBootstrapThenSync(session.value())) {
+        const QString bootstrapError = m_syncCoordinator->lastError();
+        m_freshInstallBootstrapInProgress = false;
+        setLastError(bootstrapError);
+        return false;
+    }
+
+    return true;
+}
+
+void DLAppStateManager::discardFailedFreshInstallBootstrap()
+{
+    DLDatabaseManager::instance().clearSyncContext();
+    DLDatabaseManager::instance().closeDatabase();
+    if (m_freshInstallBootstrapCreatedDatabase) {
+        QFile::remove(m_databasePath);
+    }
+    if (m_authService && !m_authService->clearSavedSession() && m_lastError.isEmpty()) {
+        setLastError(m_authService->lastError());
+    }
+    m_freshInstallBootstrapCreatedDatabase = false;
 }
 
 DLAppStateManager::DLScreen DLAppStateManager::currentScreen() const
@@ -621,6 +703,28 @@ bool DLAppStateManager::requestActiveSync()
 
 void DLAppStateManager::handleSyncFinished(bool success)
 {
+    if (m_freshInstallBootstrapInProgress) {
+        const QString syncError = m_syncCoordinator ? m_syncCoordinator->lastError() : QString();
+        m_freshInstallBootstrapInProgress = false;
+        m_syncRequestedDuringCycle = false;
+        if (success) {
+            m_freshInstallBootstrapCreatedDatabase = false;
+            emit groupsChanged();
+            emit wordsChanged();
+            emit quizStateChanged();
+            setAuthState(QStringLiteral("authenticated_session"));
+            enterFreeCoreAfterAuthenticatedStartup(false);
+            return;
+        }
+
+        setAuthBusy(false);
+        setLastError(syncError.isEmpty() ? QStringLiteral("Initial bootstrap failed.") : syncError);
+        discardFailedFreshInstallBootstrap();
+        setAuthState(QStringLiteral("authentication_required"));
+        navigateTo(AuthPage);
+        return;
+    }
+
     if (!success || !m_syncRequestedDuringCycle) {
         m_syncRequestedDuringCycle = false;
         return;

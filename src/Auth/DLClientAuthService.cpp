@@ -117,6 +117,17 @@ bool DLClientAuthService::canUseFreeCoreOffline() const
     return hasPriorSuccessfulAuthentication();
 }
 
+bool DLClientAuthService::clearSavedSession()
+{
+    if (!m_store.clearAll()) {
+        setLastError(m_store.lastError());
+        return false;
+    }
+
+    setLastError(QString());
+    return true;
+}
+
 DLClientAuthService::StartupState DLClientAuthService::startupState(bool networkAvailable) const
 {
     const std::optional<DLAuthSession> session = currentSession();

@@ -46,6 +46,7 @@ public:
     bool hasRegisteredDevice() const;
     bool canUseFreeCoreOffline() const;
     std::optional<DLAuthSession> currentSession() const;
+    bool clearSavedSession();
 
     StartupState startupState(bool networkAvailable) const;
 

@@ -13,6 +13,7 @@
 
 #include "Auth/DLAuthSessionStore.h"
 #include "Managers/DLAppStateManager.h"
+#include "Managers/DLDatabaseManager.h"
 
 class TestAppStateAuthBootstrap : public QObject
 {
@@ -24,6 +25,8 @@ private slots:
 
     void freshInstallRoutesToAuthPageWithoutOpeningDatabase();
     void priorSuccessfulAuthenticationOpensFreeCore();
+    void freshAuthenticatedInstallBootstrapsBeforeOpeningFreeCore();
+    void failedFreshBootstrapReturnsToRecoverableAuthenticationState();
     void activeConnectedStartupPullsRemoteChangesWithoutPolling();
     void activeConnectedLocalMutationStartsQueuedSync();
     void resumeStartsOneSyncAfterInactiveStartup();
@@ -112,6 +115,29 @@ void writeEmptyPullResponse(QTcpSocket* socket)
         { QStringLiteral("firstAvailableSequence"), 0 }
     });
 }
+
+bool createExistingLocalDatabase(const QString& databasePath)
+{
+    DLDatabaseManager::instance().closeDatabase();
+    const bool opened = DLDatabaseManager::instance().openDatabase(databasePath);
+    DLDatabaseManager::instance().closeDatabase();
+    return opened;
+}
+
+QJsonObject emptyBootstrapResponse(qint64 serverSequence)
+{
+    QJsonObject state;
+    state.insert(QStringLiteral("groups"), QJsonArray{});
+    state.insert(QStringLiteral("words"), QJsonArray{});
+    state.insert(QStringLiteral("reviewStats"), QJsonArray{});
+    state.insert(QStringLiteral("learningSettings"), QJsonArray{});
+    state.insert(QStringLiteral("tombstones"), QJsonArray{});
+
+    QJsonObject response;
+    response.insert(QStringLiteral("serverSequence"), serverSequence);
+    response.insert(QStringLiteral("state"), state);
+    return response;
+}
 }
 
 void TestAppStateAuthBootstrap::init()
@@ -148,6 +174,7 @@ void TestAppStateAuthBootstrap::priorSuccessfulAuthenticationOpensFreeCore()
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     const QString databasePath = dir.filePath(QStringLiteral("delearner.sqlite"));
+    QVERIFY2(createExistingLocalDatabase(databasePath), qPrintable(DLDatabaseManager::instance().lastError()));
 
     DLAuthSession session;
     session.userId = QStringLiteral("df5cb428-b235-4b56-9a21-137f1169015b");
@@ -165,6 +192,122 @@ void TestAppStateAuthBootstrap::priorSuccessfulAuthenticationOpensFreeCore()
     QVERIFY(QFile::exists(databasePath));
 }
 
+void TestAppStateAuthBootstrap::freshAuthenticatedInstallBootstrapsBeforeOpeningFreeCore()
+{
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    qputenv("DELEARNER_API_BASE_URL", QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort()).toUtf8());
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString databasePath = dir.filePath(QStringLiteral("delearner.sqlite"));
+
+    DLAppStateManager manager;
+    manager.init(databasePath);
+    QCOMPARE(manager.currentScreen(), DLAppStateManager::AuthPage);
+
+    manager.signIn(QStringLiteral("learner@example.com"), QStringLiteral("correct horse battery staple"));
+
+    QTRY_VERIFY(server.hasPendingConnections());
+    std::unique_ptr<QTcpSocket> authSocket(server.nextPendingConnection());
+    const QByteArray authRequest = readHttpRequest(authSocket.get());
+    QVERIFY(authRequest.startsWith("POST /api/v1/auth/sign-in "));
+    writeJsonResponse(authSocket.get(), 200, QJsonObject{
+        { QStringLiteral("userId"), registeredSession().userId },
+        { QStringLiteral("sessionToken"), QStringLiteral("fresh-token") },
+        { QStringLiteral("tokenType"), QStringLiteral("Bearer") }
+    });
+
+    QTRY_VERIFY(server.hasPendingConnections());
+    std::unique_ptr<QTcpSocket> deviceSocket(server.nextPendingConnection());
+    const QByteArray deviceRequest = readHttpRequest(deviceSocket.get());
+    QVERIFY(deviceRequest.startsWith("POST /api/v1/devices/register "));
+    QVERIFY(deviceRequest.toLower().contains("authorization: bearer fresh-token"));
+    const QString requestedDeviceId = httpJsonBody(deviceRequest).value(QStringLiteral("deviceId")).toString();
+    QVERIFY(!requestedDeviceId.isEmpty());
+    writeJsonResponse(deviceSocket.get(), 201, QJsonObject{
+        { QStringLiteral("deviceId"), requestedDeviceId },
+        { QStringLiteral("displayName"), QStringLiteral("Laptop") }
+    });
+
+    QTRY_VERIFY(server.hasPendingConnections());
+    std::unique_ptr<QTcpSocket> bootstrapSocket(server.nextPendingConnection());
+    const QByteArray bootstrapRequest = readHttpRequest(bootstrapSocket.get());
+    QVERIFY(bootstrapRequest.startsWith("GET /bootstrap "));
+    QVERIFY(bootstrapRequest.toLower().contains("authorization: bearer fresh-token"));
+    QCOMPARE(manager.currentScreen(), DLAppStateManager::StartupLoadingPage);
+    QCOMPARE(manager.authState(), QStringLiteral("bootstrapping"));
+    QVERIFY(manager.authBusy());
+    writeJsonResponse(bootstrapSocket.get(), 200, emptyBootstrapResponse(7));
+
+    QTRY_VERIFY(server.hasPendingConnections());
+    std::unique_ptr<QTcpSocket> pullSocket(server.nextPendingConnection());
+    const QByteArray pullRequest = readHttpRequest(pullSocket.get());
+    QVERIFY(pullRequest.startsWith("GET /events?after=7 "));
+    writeJsonResponse(pullSocket.get(), 200, QJsonObject{
+        { QStringLiteral("events"), QJsonArray{} },
+        { QStringLiteral("nextSequence"), 7 },
+        { QStringLiteral("hasMore"), false },
+        { QStringLiteral("cursorGapDetected"), false },
+        { QStringLiteral("firstAvailableSequence"), 0 }
+    });
+
+    QTRY_COMPARE(manager.currentScreen(), DLAppStateManager::AddEditWordPage);
+    QCOMPARE(manager.authState(), QStringLiteral("authenticated_session"));
+    QVERIFY(!manager.authBusy());
+    QVERIFY(QFile::exists(databasePath));
+    QCOMPARE(DLDatabaseManager::instance().remoteCursor(), qint64(7));
+    QVERIFY(!server.waitForNewConnection(100));
+}
+
+void TestAppStateAuthBootstrap::failedFreshBootstrapReturnsToRecoverableAuthenticationState()
+{
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    qputenv("DELEARNER_API_BASE_URL", QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort()).toUtf8());
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString databasePath = dir.filePath(QStringLiteral("delearner.sqlite"));
+    const QString authPath = QStringLiteral("%1.auth.json").arg(databasePath);
+
+    DLAppStateManager manager;
+    manager.init(databasePath);
+    manager.signIn(QStringLiteral("learner@example.com"), QStringLiteral("correct horse battery staple"));
+
+    QTRY_VERIFY(server.hasPendingConnections());
+    std::unique_ptr<QTcpSocket> authSocket(server.nextPendingConnection());
+    QVERIFY(readHttpRequest(authSocket.get()).startsWith("POST /api/v1/auth/sign-in "));
+    writeJsonResponse(authSocket.get(), 200, QJsonObject{
+        { QStringLiteral("userId"), registeredSession().userId },
+        { QStringLiteral("sessionToken"), QStringLiteral("fresh-token") },
+        { QStringLiteral("tokenType"), QStringLiteral("Bearer") }
+    });
+
+    QTRY_VERIFY(server.hasPendingConnections());
+    std::unique_ptr<QTcpSocket> deviceSocket(server.nextPendingConnection());
+    const QByteArray deviceRequest = readHttpRequest(deviceSocket.get());
+    const QString requestedDeviceId = httpJsonBody(deviceRequest).value(QStringLiteral("deviceId")).toString();
+    writeJsonResponse(deviceSocket.get(), 201, QJsonObject{
+        { QStringLiteral("deviceId"), requestedDeviceId },
+        { QStringLiteral("displayName"), QStringLiteral("Laptop") }
+    });
+
+    QTRY_VERIFY(server.hasPendingConnections());
+    std::unique_ptr<QTcpSocket> bootstrapSocket(server.nextPendingConnection());
+    QVERIFY(readHttpRequest(bootstrapSocket.get()).startsWith("GET /bootstrap "));
+    writeJsonResponse(bootstrapSocket.get(), 500, QJsonObject{
+        { QStringLiteral("message"), QStringLiteral("Bootstrap unavailable.") }
+    });
+
+    QTRY_COMPARE(manager.currentScreen(), DLAppStateManager::AuthPage);
+    QCOMPARE(manager.authState(), QStringLiteral("authentication_required"));
+    QVERIFY(!manager.authBusy());
+    QCOMPARE(manager.lastError(), QStringLiteral("Bootstrap unavailable."));
+    QVERIFY(!QFile::exists(databasePath));
+    QVERIFY(!QFile::exists(authPath));
+}
+
 void TestAppStateAuthBootstrap::activeConnectedStartupPullsRemoteChangesWithoutPolling()
 {
     QTcpServer server;
@@ -177,6 +320,7 @@ void TestAppStateAuthBootstrap::activeConnectedStartupPullsRemoteChangesWithoutP
 
     DLAuthSessionStore store(QStringLiteral("%1.auth.json").arg(databasePath));
     QVERIFY2(store.saveSuccessfulSession(registeredSession()), qPrintable(store.lastError()));
+    QVERIFY2(createExistingLocalDatabase(databasePath), qPrintable(DLDatabaseManager::instance().lastError()));
 
     DLAppStateManager manager;
     manager.init(databasePath);
@@ -203,6 +347,7 @@ void TestAppStateAuthBootstrap::activeConnectedLocalMutationStartsQueuedSync()
 
     DLAuthSessionStore store(QStringLiteral("%1.auth.json").arg(databasePath));
     QVERIFY2(store.saveSuccessfulSession(registeredSession()), qPrintable(store.lastError()));
+    QVERIFY2(createExistingLocalDatabase(databasePath), qPrintable(DLDatabaseManager::instance().lastError()));
 
     DLAppStateManager manager;
     manager.init(databasePath);
@@ -253,6 +398,7 @@ void TestAppStateAuthBootstrap::resumeStartsOneSyncAfterInactiveStartup()
 
     DLAuthSessionStore store(QStringLiteral("%1.auth.json").arg(databasePath));
     QVERIFY2(store.saveSuccessfulSession(registeredSession()), qPrintable(store.lastError()));
+    QVERIFY2(createExistingLocalDatabase(databasePath), qPrintable(DLDatabaseManager::instance().lastError()));
 
     DLAppStateManager manager;
     manager.setApplicationActive(false);
@@ -284,6 +430,7 @@ void TestAppStateAuthBootstrap::networkRestorationStartsOneSyncAfterOfflineStart
 
     DLAuthSessionStore store(QStringLiteral("%1.auth.json").arg(databasePath));
     QVERIFY2(store.saveSuccessfulSession(registeredSession()), qPrintable(store.lastError()));
+    QVERIFY2(createExistingLocalDatabase(databasePath), qPrintable(DLDatabaseManager::instance().lastError()));
 
     DLAppStateManager manager;
     manager.setNetworkAvailable(false);
@@ -315,6 +462,7 @@ void TestAppStateAuthBootstrap::overlappingResumeAndNetworkRestorationCoalesceOn
 
     DLAuthSessionStore store(QStringLiteral("%1.auth.json").arg(databasePath));
     QVERIFY2(store.saveSuccessfulSession(registeredSession()), qPrintable(store.lastError()));
+    QVERIFY2(createExistingLocalDatabase(databasePath), qPrintable(DLDatabaseManager::instance().lastError()));
 
     DLAppStateManager manager;
     manager.init(databasePath);
@@ -356,6 +504,7 @@ void TestAppStateAuthBootstrap::manualDiagnosticSyncUsesExistingCoordinator()
 
     DLAuthSessionStore store(QStringLiteral("%1.auth.json").arg(databasePath));
     QVERIFY2(store.saveSuccessfulSession(registeredSession()), qPrintable(store.lastError()));
+    QVERIFY2(createExistingLocalDatabase(databasePath), qPrintable(DLDatabaseManager::instance().lastError()));
 
     DLAppStateManager manager;
     manager.init(databasePath);
@@ -389,6 +538,7 @@ void TestAppStateAuthBootstrap::offlineManualSyncDoesNotBypassNetworkRestoration
 
     DLAuthSessionStore store(QStringLiteral("%1.auth.json").arg(databasePath));
     QVERIFY2(store.saveSuccessfulSession(registeredSession()), qPrintable(store.lastError()));
+    QVERIFY2(createExistingLocalDatabase(databasePath), qPrintable(DLDatabaseManager::instance().lastError()));
 
     DLAppStateManager manager;
     manager.setNetworkAvailable(false);
@@ -421,6 +571,7 @@ void TestAppStateAuthBootstrap::repeatedManualDiagnosticTriggersCoalesceOneFollo
 
     DLAuthSessionStore store(QStringLiteral("%1.auth.json").arg(databasePath));
     QVERIFY2(store.saveSuccessfulSession(registeredSession()), qPrintable(store.lastError()));
+    QVERIFY2(createExistingLocalDatabase(databasePath), qPrintable(DLDatabaseManager::instance().lastError()));
 
     DLAppStateManager manager;
     manager.init(databasePath);

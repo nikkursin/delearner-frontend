@@ -32,6 +32,7 @@ public:
     QString lastError() const;
 
     bool startSync(const DLAuthSession& session);
+    bool startBootstrapThenSync(const DLAuthSession& session);
 
 signals:
     void syncStarted();
@@ -46,6 +47,7 @@ private:
 
     void pushPendingOutboxEvents();
     void handlePushReply(QNetworkReply* reply, const QStringList& eventIds);
+    void handleBootstrapReply(QNetworkReply* reply);
     void pullRemoteChanges();
     void handlePullReply(QNetworkReply* reply);
     void acknowledgeRemoteCursor(qint64 consumedSequence);

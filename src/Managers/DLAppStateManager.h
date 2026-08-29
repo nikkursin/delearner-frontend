@@ -131,6 +131,9 @@ private:
     void setAuthState(const QString& authState);
     void setAuthBusy(bool authBusy);
     bool openFreeCore();
+    void enterFreeCoreAfterAuthenticatedStartup(bool requestInitialSync);
+    bool startFreshInstallBootstrap();
+    void discardFailedFreshInstallBootstrap();
     bool requestActiveSync();
     void handleSyncFinished(bool success);
     QString localPathFromUrlOrPath(const QString& value) const;
@@ -144,6 +147,8 @@ private:
     bool m_applicationActive = true;
     bool m_networkAvailable = true;
     bool m_syncRequestedDuringCycle = false;
+    bool m_freshInstallBootstrapInProgress = false;
+    bool m_freshInstallBootstrapCreatedDatabase = false;
     std::unique_ptr<DLClientAuthService> m_authService;
     std::unique_ptr<DLSyncCoordinator> m_syncCoordinator;
     std::unique_ptr<DLWordService> m_wordService;

@@ -10,6 +10,7 @@
 #include <QVariantMap>
 
 #include "Managers/DLDatabaseManager.h"
+#include "Sync/DLBootstrapStateRestorer.h"
 #include "Sync/DLRemoteChangeReconciler.h"
 #include "Sync/DLSyncRequestBuilder.h"
 
@@ -201,6 +202,37 @@ bool DLSyncCoordinator::startSync(const DLAuthSession& session)
     return true;
 }
 
+bool DLSyncCoordinator::startBootstrapThenSync(const DLAuthSession& session)
+{
+    if (m_syncInProgress) {
+        setLastError(QStringLiteral("Sync is already in progress."));
+        return false;
+    }
+    if (!m_network) {
+        setLastError(QStringLiteral("Sync coordinator requires a network access manager."));
+        return false;
+    }
+
+    QString error;
+    const QNetworkRequest request = DLSyncRequestBuilder::jsonRequest(m_apiBaseUrl, QStringLiteral("/bootstrap"), session, &error);
+    if (!error.isEmpty() || !request.url().isValid()) {
+        setLastError(error.isEmpty() ? QStringLiteral("Sync coordinator could not build an authenticated bootstrap request.") : error);
+        return false;
+    }
+
+    m_session = session;
+    m_pullHasMore = false;
+    setLastError(QString());
+    setSyncInProgress(true);
+    emit syncStarted();
+
+    QNetworkReply* reply = m_network->get(request);
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+        handleBootstrapReply(reply);
+    });
+    return true;
+}
+
 void DLSyncCoordinator::setLastError(const QString& error)
 {
     if (m_lastError == error) {
@@ -323,6 +355,25 @@ void DLSyncCoordinator::handlePushReply(QNetworkReply* reply, const QStringList&
 
     if (hasRejectedEvents) {
         finishSync(false, QStringLiteral("One or more sync events were rejected by the backend."));
+        return;
+    }
+
+    pullRemoteChanges();
+}
+
+void DLSyncCoordinator::handleBootstrapReply(QNetworkReply* reply)
+{
+    const std::unique_ptr<QNetworkReply, void (*)(QNetworkReply*)> replyGuard(reply, deleteReplyLater);
+    const QByteArray body = reply->readAll();
+    if (!httpSucceeded(reply)) {
+        finishSync(false, networkReplyError(reply, body, QStringLiteral("Bootstrap state download failed.")));
+        return;
+    }
+
+    DLBootstrapStateRestorer restorer(m_database);
+    QString error;
+    if (!restorer.restoreFromJson(body, &error)) {
+        finishSync(false, error);
         return;
     }
 
