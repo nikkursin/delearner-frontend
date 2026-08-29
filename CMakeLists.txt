@@ -83,6 +83,8 @@ set(DELEARNER_CORE_SOURCES
     src/Sync/DLBootstrapStateRestorer.h
     src/Sync/DLRemoteChangeReconciler.cpp
     src/Sync/DLRemoteChangeReconciler.h
+    src/Sync/DLSyncCoordinator.cpp
+    src/Sync/DLSyncCoordinator.h
     src/Sync/DLSyncRequestBuilder.cpp
     src/Sync/DLSyncRequestBuilder.h
     src/Sync/DLSyncEventSerializer.cpp

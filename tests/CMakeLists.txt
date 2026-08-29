@@ -6,6 +6,7 @@ set(DELEARNER_TESTS
     TestQuizRepository
     TestSyncEventSerializer
     TestRemoteChangeReconciler
+    TestSyncCoordinator
     TestBootstrapStateRestorer
     TestTransactionalOutbox
     TestAuthSessionStore
