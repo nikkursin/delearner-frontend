@@ -24,7 +24,7 @@ private slots:
 
     void restoresBootstrapStateForFreeCoreRepositories();
     void restoreThenDownloadedCatchUpAppliesPostBootstrapMutationBeforeReady();
-    void refusesToReplaceStateWhenPendingOutboxExists();
+    void preservesAndReplaysPendingOutboxWhenReplacingState();
 
 private:
     QVariantMap bootstrapResponse(qint64 serverSequence) const;
@@ -247,7 +247,7 @@ void TestBootstrapStateRestorer::restoreThenDownloadedCatchUpAppliesPostBootstra
     QCOMPARE(DLDatabaseManager::instance().selectInt(QStringLiteral("SELECT COUNT(*) FROM sync_outbox_events;")), 0);
 }
 
-void TestBootstrapStateRestorer::refusesToReplaceStateWhenPendingOutboxExists()
+void TestBootstrapStateRestorer::preservesAndReplaysPendingOutboxWhenReplacingState()
 {
     DLWord word;
     word.germanWord = QStringLiteral("gehen");
@@ -256,14 +256,47 @@ void TestBootstrapStateRestorer::refusesToReplaceStateWhenPendingOutboxExists()
     QVERIFY(!localWordId.isEmpty());
     QCOMPARE(DLDatabaseManager::instance().selectInt(QStringLiteral("SELECT COUNT(*) FROM sync_outbox_events;")), 1);
 
+    const QVariantMap pendingBefore = DLDatabaseManager::instance().selectOneRow(
+        QStringLiteral(R"(
+            SELECT event_id, envelope_json
+            FROM sync_outbox_events
+            WHERE entity_id = :entity_id;
+        )"),
+        {{ QStringLiteral(":entity_id"), localWordId }});
+    QVERIFY(!pendingBefore.isEmpty());
+    QVERIFY2(DLDatabaseManager::instance().recordSyncOutboxSendAttempt(
+                 pendingBefore.value(QStringLiteral("event_id")).toString(),
+                 1234,
+                 QStringLiteral("offline")),
+             qPrintable(DLDatabaseManager::instance().lastError()));
+
     DLBootstrapStateRestorer restorer(DLDatabaseManager::instance());
     QString error;
-    QVERIFY(!restorer.restoreFromResponse(bootstrapResponse(88), &error));
-    QVERIFY2(error.contains(QStringLiteral("empty pending sync outbox")), qPrintable(error));
+    QVERIFY2(restorer.restoreFromResponse(bootstrapResponse(88), &error), qPrintable(error));
 
-    QCOMPARE(DLDatabaseManager::instance().remoteCursor(), qint64(0));
+    QCOMPARE(DLDatabaseManager::instance().remoteCursor(), qint64(88));
     QCOMPARE(DLDatabaseManager::instance().selectInt(QStringLiteral("SELECT COUNT(*) FROM sync_outbox_events;")), 1);
-    QCOMPARE(DLDatabaseManager::instance().fetchWordById(localWordId).isEmpty(), false);
+
+    const QVariantMap pendingAfter = DLDatabaseManager::instance().selectOneRow(
+        QStringLiteral(R"(
+            SELECT event_id, envelope_json, send_attempt_count, next_attempt_after, last_error
+            FROM sync_outbox_events
+            WHERE entity_id = :entity_id;
+        )"),
+        {{ QStringLiteral(":entity_id"), localWordId }});
+    QCOMPARE(pendingAfter.value(QStringLiteral("event_id")).toString(),
+             pendingBefore.value(QStringLiteral("event_id")).toString());
+    QCOMPARE(pendingAfter.value(QStringLiteral("envelope_json")).toString(),
+             pendingBefore.value(QStringLiteral("envelope_json")).toString());
+    QCOMPARE(pendingAfter.value(QStringLiteral("send_attempt_count")).toInt(), 1);
+    QCOMPARE(pendingAfter.value(QStringLiteral("next_attempt_after")).toLongLong(), qint64(1234));
+    QCOMPARE(pendingAfter.value(QStringLiteral("last_error")).toString(), QStringLiteral("offline"));
+
+    const QVariantMap replayedWord = DLDatabaseManager::instance().fetchWordById(localWordId);
+    QCOMPARE(replayedWord.value(QStringLiteral("german_word")).toString(), QStringLiteral("gehen"));
+    QCOMPARE(replayedWord.value(QStringLiteral("native_translation")).toString(), QStringLiteral("go"));
+    QCOMPARE(DLDatabaseManager::instance().fetchGroupById(kGroupId).value(QStringLiteral("name")).toString(),
+             QStringLiteral("Travel"));
 }
 
 QTEST_MAIN(TestBootstrapStateRestorer)

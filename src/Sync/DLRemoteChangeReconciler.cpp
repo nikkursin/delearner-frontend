@@ -422,12 +422,19 @@ bool DLRemoteChangeReconciler::replaceLocalStateWithRemoteEventsAndAdvanceCursor
     }
 
     const bool success = m_database.transaction([&](QSqlDatabase& db, QString* transactionError) {
-        if (!localOutboxIsEmpty(db, transactionError)
+        QList<DLSyncEventEnvelope> pendingOutboxEvents;
+        if (!loadPendingOutboxEvents(db, &pendingOutboxEvents, transactionError)
             || !clearLocalSyncableState(db, transactionError)) {
             return false;
         }
 
         for (const DLSyncEventEnvelope& event : events) {
+            if (!applyRemoteEventInTransaction(db, event, transactionError)) {
+                return false;
+            }
+        }
+
+        for (const DLSyncEventEnvelope& event : pendingOutboxEvents) {
             if (!applyRemoteEventInTransaction(db, event, transactionError)) {
                 return false;
             }
@@ -472,20 +479,34 @@ bool DLRemoteChangeReconciler::recordRemoteCursor(QSqlDatabase& db, qint64 consu
     return execQuery(query, error);
 }
 
-bool DLRemoteChangeReconciler::localOutboxIsEmpty(QSqlDatabase& db, QString* error)
+bool DLRemoteChangeReconciler::loadPendingOutboxEvents(QSqlDatabase& db,
+                                                       QList<DLSyncEventEnvelope>* events,
+                                                       QString* error)
 {
     QSqlQuery query(db);
-    query.prepare(QStringLiteral("SELECT COUNT(*) FROM sync_outbox_events;"));
+    query.prepare(QStringLiteral(R"(
+        SELECT contract_version, envelope_json
+        FROM sync_outbox_events
+        ORDER BY created_at ASC, rowid ASC;
+    )"));
     if (!execQuery(query, error)) {
         return false;
     }
-    if (!query.next()) {
-        setError(error, QStringLiteral("Could not inspect local sync outbox."));
-        return false;
-    }
-    if (query.value(0).toInt() > 0) {
-        setError(error, QStringLiteral("Bootstrap restore requires an empty pending sync outbox."));
-        return false;
+
+    events->clear();
+    while (query.next()) {
+        const QString contractVersion = query.value(0).toString().trimmed();
+        const QByteArray envelopeJson = query.value(1).toString().toUtf8();
+        QString parseError;
+        const DLSyncEventEnvelope event = DLSyncEventSerializer::parseContractJson(
+            envelopeJson,
+            contractVersion.isEmpty() ? DLSyncEventSerializer::contractVersion() : contractVersion,
+            &parseError);
+        if (!parseError.isEmpty()) {
+            setError(error, QStringLiteral("Pending sync outbox event cannot be replayed during bootstrap restore: %1").arg(parseError));
+            return false;
+        }
+        events->append(event);
     }
     return true;
 }

@@ -29,7 +29,7 @@ public:
 private:
     bool applyRemoteEventInTransaction(QSqlDatabase& db, const DLSyncEventEnvelope& event, QString* error);
     bool recordRemoteCursor(QSqlDatabase& db, qint64 consumedSequence, QString* error);
-    bool localOutboxIsEmpty(QSqlDatabase& db, QString* error);
+    bool loadPendingOutboxEvents(QSqlDatabase& db, QList<DLSyncEventEnvelope>* events, QString* error);
     bool clearLocalSyncableState(QSqlDatabase& db, QString* error);
 
     bool applyPayloadEvent(QSqlDatabase& db, const DLSyncEventEnvelope& event, QString* error);
