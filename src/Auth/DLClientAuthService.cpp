@@ -46,7 +46,7 @@ QUrl DLClientAuthService::defaultApiBaseUrl()
         return QUrl(QString::fromUtf8(configured.trimmed()));
     }
 
-    return QUrl(QStringLiteral("http://127.0.0.1:8080"));
+    return QUrl(QStringLiteral("http://192.168.178.75:8080"));
 }
 
 QString DLClientAuthService::stateName(StartupState state)

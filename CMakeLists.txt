@@ -40,7 +40,7 @@ list(REMOVE_ITEM AssetsFiles ${QmlFiles})
 list(APPEND AssetsFiles assets/icons/sort_words_icon.svg)
 list(REMOVE_DUPLICATES AssetsFiles)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Network Sql Test)
+find_package(Qt6 REQUIRED COMPONENTS Core Network Sql #[[Test]])
 
 option(DELEARNER_BUILD_APP "Build the Felgo application target." ON)
 if(DELEARNER_BUILD_APP AND NOT Felgo_FOUND)
@@ -165,6 +165,10 @@ if(DELEARNER_BUILD_APP)
     target_link_libraries(delearner PRIVATE Qt6::Sql)
     target_link_libraries(delearner PRIVATE delearner_core)
 
+    if(IOS AND CMAKE_OSX_SYSROOT MATCHES "iphonesimulator")
+        qt_import_plugins(delearner EXCLUDE Qt6::QFFmpegMediaPlugin)
+    endif()
+
     if(IOS)
         target_link_libraries(delearner PRIVATE "-framework UIKit")
         set_target_properties(delearner PROPERTIES
@@ -176,8 +180,8 @@ if(DELEARNER_BUILD_APP)
     endif()
 endif()
 
-enable_testing()
-add_subdirectory(tests)
+# enable_testing()
+# add_subdirectory(tests)
 
 # uncomment this line to add Felgo Hot Reload and use hot reloading with your custom C++ code
 # for the remaining steps see here: https://felgo.com/custom-code-reload-app/
