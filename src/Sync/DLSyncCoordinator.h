@@ -45,7 +45,8 @@ private:
     void setSyncInProgress(bool syncInProgress);
     void finishSync(bool success, const QString& error = QString());
 
-    void pushPendingOutboxEvents();
+    void pushPendingOutboxEvents(bool includeDeferredEvents = false);
+    void requestBootstrap(bool replayPendingEventsAfterRestore);
     void handlePushReply(QNetworkReply* reply, const QStringList& eventIds);
     void handleBootstrapReply(QNetworkReply* reply);
     void pullRemoteChanges();
@@ -60,6 +61,8 @@ private:
     DLAuthSession m_session;
     bool m_syncInProgress = false;
     bool m_pullHasMore = false;
+    bool m_rebootstrapAttempted = false;
+    bool m_replayPendingEventsAfterBootstrap = false;
     QString m_lastError;
 };
 

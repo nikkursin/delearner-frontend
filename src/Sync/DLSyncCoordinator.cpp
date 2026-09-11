@@ -51,6 +51,22 @@ bool httpSucceeded(QNetworkReply* reply)
     return reply->error() == QNetworkReply::NoError && (status == 0 || (status >= 200 && status < 300));
 }
 
+bool requiresRebootstrap(QNetworkReply* reply, const QByteArray& body)
+{
+    if (!reply || reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() != 409) {
+        return false;
+    }
+
+    const QJsonDocument document = QJsonDocument::fromJson(body);
+    if (!document.isObject()) {
+        return false;
+    }
+
+    const QJsonObject response = document.object();
+    return response.value(QStringLiteral("error")).toString() == QStringLiteral("stale_cursor")
+        && response.value(QStringLiteral("rebootstrapRequired")).toBool();
+}
+
 qint64 secondsFromContractTimestamp(const QJsonValue& value)
 {
     if (value.isDouble()) {
@@ -195,6 +211,8 @@ bool DLSyncCoordinator::startSync(const DLAuthSession& session)
 
     m_session = session;
     m_pullHasMore = false;
+    m_rebootstrapAttempted = false;
+    m_replayPendingEventsAfterBootstrap = false;
     setLastError(QString());
     setSyncInProgress(true);
     emit syncStarted();
@@ -222,6 +240,8 @@ bool DLSyncCoordinator::startBootstrapThenSync(const DLAuthSession& session)
 
     m_session = session;
     m_pullHasMore = false;
+    m_rebootstrapAttempted = false;
+    m_replayPendingEventsAfterBootstrap = false;
     setLastError(QString());
     setSyncInProgress(true);
     emit syncStarted();
@@ -258,14 +278,24 @@ void DLSyncCoordinator::finishSync(bool success, const QString& error)
     emit syncFinished(success);
 }
 
-void DLSyncCoordinator::pushPendingOutboxEvents()
+void DLSyncCoordinator::pushPendingOutboxEvents(bool includeDeferredEvents)
 {
-    const QVariantList rows = m_database.selectRows(QStringLiteral(R"(
+    const QString pendingQuery = includeDeferredEvents
+        ? QStringLiteral(R"(
+        SELECT event_id, envelope_json
+        FROM sync_outbox_events
+        ORDER BY created_at ASC, event_id ASC;
+    )")
+        : QStringLiteral(R"(
         SELECT event_id, envelope_json
         FROM sync_outbox_events
         WHERE next_attempt_after IS NULL OR next_attempt_after <= :now
         ORDER BY created_at ASC, event_id ASC;
-    )"), {{ QStringLiteral(":now"), DLDatabaseManager::currentUnixTime() }});
+    )");
+    const QVariantMap queryArguments = includeDeferredEvents
+        ? QVariantMap{}
+        : QVariantMap{{ QStringLiteral(":now"), DLDatabaseManager::currentUnixTime() }};
+    const QVariantList rows = m_database.selectRows(pendingQuery, queryArguments);
 
     if (!m_database.lastError().isEmpty()) {
         finishSync(false, m_database.lastError());
@@ -300,6 +330,28 @@ void DLSyncCoordinator::pushPendingOutboxEvents()
     QNetworkReply* reply = m_network->post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
     connect(reply, &QNetworkReply::finished, this, [this, reply, eventIds]() {
         handlePushReply(reply, eventIds);
+    });
+}
+
+void DLSyncCoordinator::requestBootstrap(bool replayPendingEventsAfterRestore)
+{
+    QString error;
+    const QNetworkRequest request = DLSyncRequestBuilder::jsonRequest(
+        m_apiBaseUrl,
+        QStringLiteral("/bootstrap"),
+        m_session,
+        &error);
+    if (!error.isEmpty() || !request.url().isValid()) {
+        finishSync(false, error.isEmpty()
+                              ? QStringLiteral("Sync coordinator could not build an authenticated bootstrap request.")
+                              : error);
+        return;
+    }
+
+    m_replayPendingEventsAfterBootstrap = replayPendingEventsAfterRestore;
+    QNetworkReply* reply = m_network->get(request);
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+        handleBootstrapReply(reply);
     });
 }
 
@@ -377,6 +429,12 @@ void DLSyncCoordinator::handleBootstrapReply(QNetworkReply* reply)
         return;
     }
 
+    if (m_replayPendingEventsAfterBootstrap) {
+        m_replayPendingEventsAfterBootstrap = false;
+        pushPendingOutboxEvents(true);
+        return;
+    }
+
     pullRemoteChanges();
 }
 
@@ -410,6 +468,11 @@ void DLSyncCoordinator::handlePullReply(QNetworkReply* reply)
     const std::unique_ptr<QNetworkReply, void (*)(QNetworkReply*)> replyGuard(reply, deleteReplyLater);
     const QByteArray body = reply->readAll();
     if (!httpSucceeded(reply)) {
+        if (requiresRebootstrap(reply, body) && !m_rebootstrapAttempted) {
+            m_rebootstrapAttempted = true;
+            requestBootstrap(true);
+            return;
+        }
         finishSync(false, networkReplyError(reply, body, QStringLiteral("Sync download failed.")));
         return;
     }
