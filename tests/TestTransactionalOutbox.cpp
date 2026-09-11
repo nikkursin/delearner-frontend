@@ -13,6 +13,7 @@
 #include "Repositories/DLGroupRepository.h"
 #include "Repositories/DLReviewStatsRepository.h"
 #include "Repositories/DLWordRepository.h"
+#include "Services/DLQuizSession.h"
 
 class TestTransactionalOutbox : public QObject
 {
@@ -27,6 +28,7 @@ private slots:
     void outboxWriteRollsBackWhenTransactionFailsAfterEventInsert();
     void groupDeleteRecordsTombstoneAndAffectedWordUpdate();
     void reviewStatsIncrementCreatesOutboxEvent();
+    void quizAnswerCreatesReviewStatsOnlySyncEvent();
     void sendAttemptKeepsActiveOutboxEventForRetry();
     void acknowledgementMovesEventToBoundedDiagnosticHistory();
 
@@ -145,6 +147,54 @@ void TestTransactionalOutbox::reviewStatsIncrementCreatesOutboxEvent()
                  QStringLiteral("SELECT COUNT(*) FROM sync_outbox_events WHERE entity_type = 'word_review_stats' AND entity_id = :id;"),
                  {{ QStringLiteral(":id"), wordId }}),
              1);
+}
+
+void TestTransactionalOutbox::quizAnswerCreatesReviewStatsOnlySyncEvent()
+{
+    DLWord word;
+    word.germanWord = QStringLiteral("Haus");
+    word.nativeTranslation = QStringLiteral("house");
+    const QString wordId = DLWordRepository(DLDatabaseManager::instance()).insertWord(word);
+    QVERIFY(!wordId.isEmpty());
+    QVERIFY2(DLDatabaseManager::instance().executeSql(QStringLiteral("DELETE FROM sync_outbox_events;")),
+             qPrintable(DLDatabaseManager::instance().lastError()));
+
+    DLQuizQuestion question;
+    question.wordId = wordId;
+    question.answer = QStringLiteral("house");
+    question.options = {QStringLiteral("house"), QStringLiteral("tree")};
+
+    DLQuizSession session(DLDatabaseManager::instance());
+    session.start(QStringLiteral("translation"), QStringLiteral("Translation Quiz"), {}, {question});
+    const QVariantMap answered = session.submitAnswer(QStringLiteral("house"));
+    QVERIFY(answered.value(QStringLiteral("isCorrect")).toBool());
+    QVERIFY2(session.lastError().isEmpty(), qPrintable(session.lastError()));
+
+    const DLWordReviewStats stats =
+        DLReviewStatsRepository(DLDatabaseManager::instance()).fetchStats(wordId);
+    QCOMPARE(stats.correctAnswers, 1);
+    QCOMPARE(stats.wrongAnswers, 0);
+
+    const QVariantMap outbox = DLDatabaseManager::instance().selectOneRow(
+        QStringLiteral("SELECT entity_type, entity_id, envelope_json FROM sync_outbox_events;"));
+    QCOMPARE(DLDatabaseManager::instance().selectInt(
+                 QStringLiteral("SELECT COUNT(*) FROM sync_outbox_events;")),
+             1);
+    QCOMPARE(outbox.value(QStringLiteral("entity_type")).toString(),
+             QStringLiteral("word_review_stats"));
+    QCOMPARE(outbox.value(QStringLiteral("entity_id")).toString(), wordId);
+
+    const QJsonObject envelope = QJsonDocument::fromJson(
+        outbox.value(QStringLiteral("envelope_json")).toString().toUtf8()).object();
+    const QJsonObject payload = envelope.value(QStringLiteral("payload")).toObject();
+    QCOMPARE(payload.value(QStringLiteral("word_id")).toString(), wordId);
+    QCOMPARE(payload.value(QStringLiteral("correct_answers")).toInt(), 1);
+    QCOMPARE(payload.value(QStringLiteral("wrong_answers")).toInt(), 0);
+    QVERIFY(!payload.contains(QStringLiteral("quiz_session_id")));
+    QVERIFY(!payload.contains(QStringLiteral("quiz_history")));
+    QVERIFY(!payload.contains(QStringLiteral("raw_quiz_history")));
+    QVERIFY(!payload.contains(QStringLiteral("question_history")));
+    QVERIFY(!payload.contains(QStringLiteral("answers")));
 }
 
 void TestTransactionalOutbox::sendAttemptKeepsActiveOutboxEventForRetry()
