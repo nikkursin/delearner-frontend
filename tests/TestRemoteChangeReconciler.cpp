@@ -22,6 +22,7 @@ private slots:
 
     void remoteGroupAndWordPayloadsApplyWithoutOutboxFeedback();
     void remoteGroupDeleteTombstonesGroupAndUnlinksWordsWithoutOutboxFeedback();
+    void twoDeviceWordGroupCrudAndMembershipReconcilesBothDirections();
     void remoteReviewStatsPayloadReconcilesWithoutOutboxFeedback();
     void cursorAdvancesOnlyAfterWholeRemoteBatchApplies();
 
@@ -38,12 +39,13 @@ qint64 isoSeconds(const QString& text)
 DLSyncEventEnvelope baseEvent(const QString& entityType,
                               const QString& entityId,
                               const QString& operation,
-                              const QString& updatedAt)
+                              const QString& updatedAt,
+                              const QString& deviceId = QStringLiteral("b8e96c4a-f2cb-4ef3-8412-d6694a8358e4"))
 {
     DLSyncEventEnvelope event;
     event.contractVersion = DLSyncEventSerializer::contractVersion();
     event.eventId = QUuid::createUuid().toString(QUuid::WithoutBraces);
-    event.deviceId = QStringLiteral("b8e96c4a-f2cb-4ef3-8412-d6694a8358e4");
+    event.deviceId = deviceId;
     event.entityType = entityType;
     event.entityId = entityId;
     event.operation = operation;
@@ -55,9 +57,11 @@ DLSyncEventEnvelope baseEvent(const QString& entityType,
 DLSyncEventEnvelope groupPayloadEvent(const QString& groupId,
                                       const QString& name,
                                       const QString& colorHex,
-                                      const QString& updatedAt)
+                                      const QString& updatedAt,
+                                      const QString& operation = QStringLiteral("update"),
+                                      const QString& deviceId = QStringLiteral("b8e96c4a-f2cb-4ef3-8412-d6694a8358e4"))
 {
-    DLSyncEventEnvelope event = baseEvent(QStringLiteral("group"), groupId, QStringLiteral("update"), updatedAt);
+    DLSyncEventEnvelope event = baseEvent(QStringLiteral("group"), groupId, operation, updatedAt, deviceId);
     event.payload = {
         { QStringLiteral("id"), groupId },
         { QStringLiteral("ownerUserId"), DLTestSupport::testUserId() },
@@ -72,9 +76,11 @@ DLSyncEventEnvelope groupPayloadEvent(const QString& groupId,
 DLSyncEventEnvelope wordPayloadEvent(const QString& wordId,
                                      const QString& groupId,
                                      const QString& nativeTranslation,
-                                     const QString& updatedAt)
+                                     const QString& updatedAt,
+                                     const QString& operation = QStringLiteral("update"),
+                                     const QString& deviceId = QStringLiteral("b8e96c4a-f2cb-4ef3-8412-d6694a8358e4"))
 {
-    DLSyncEventEnvelope event = baseEvent(QStringLiteral("word"), wordId, QStringLiteral("update"), updatedAt);
+    DLSyncEventEnvelope event = baseEvent(QStringLiteral("word"), wordId, operation, updatedAt, deviceId);
     event.payload = {
         { QStringLiteral("id"), wordId },
         { QStringLiteral("ownerUserId"), DLTestSupport::testUserId() },
@@ -102,9 +108,10 @@ DLSyncEventEnvelope wordPayloadEvent(const QString& wordId,
 
 DLSyncEventEnvelope tombstoneEvent(const QString& entityType,
                                    const QString& entityId,
-                                   const QString& deletedAt)
+                                   const QString& deletedAt,
+                                   const QString& deviceId = QStringLiteral("b8e96c4a-f2cb-4ef3-8412-d6694a8358e4"))
 {
-    DLSyncEventEnvelope event = baseEvent(entityType, entityId, QStringLiteral("delete"), deletedAt);
+    DLSyncEventEnvelope event = baseEvent(entityType, entityId, QStringLiteral("delete"), deletedAt, deviceId);
     event.tombstone = DLSyncEventSerializer::tombstoneForEntity(
         entityType,
         entityId,
@@ -189,6 +196,77 @@ void TestRemoteChangeReconciler::remoteGroupDeleteTombstonesGroupAndUnlinksWords
                  QStringLiteral("SELECT COUNT(*) FROM groups WHERE sync_id = :sync_id AND deleted_at IS NOT NULL;"),
                  {{ QStringLiteral(":sync_id"), groupId }}),
              1);
+}
+
+void TestRemoteChangeReconciler::twoDeviceWordGroupCrudAndMembershipReconcilesBothDirections()
+{
+    const QString deviceA = QStringLiteral("b8e96c4a-f2cb-4ef3-8412-d6694a8358e4");
+    const QString deviceB = QStringLiteral("d91f7d5c-86ee-458f-bd95-9a39f020174a");
+    const QString groupA = QStringLiteral("0b2cfd59-d17f-4772-9de0-7db26005f507");
+    const QString wordA = QStringLiteral("471e206c-9c4f-4212-ae90-e90a2ee04ce4");
+    const QString groupB = QStringLiteral("f20c8544-3f0b-4767-9618-32aecf56d7e9");
+    const QString wordB = QStringLiteral("a30d9655-4a1c-4878-a729-43bfd067e8fa");
+
+    DLRemoteChangeReconciler reconciler(DLDatabaseManager::instance());
+    QString error;
+
+    const QList<DLSyncEventEnvelope> fromDeviceACreate = {
+        groupPayloadEvent(groupA, QStringLiteral("Travel A"), QStringLiteral("#2F80ED"),
+                          QStringLiteral("2026-01-15T09:00:00Z"), QStringLiteral("create"), deviceA),
+        wordPayloadEvent(wordA, groupA, QStringLiteral("ticket A"),
+                         QStringLiteral("2026-01-15T09:01:00Z"), QStringLiteral("create"), deviceA),
+    };
+    QVERIFY2(reconciler.applyRemoteEventsAndAdvanceCursor(fromDeviceACreate, 2, &error), qPrintable(error));
+    QCOMPARE(DLDatabaseManager::instance().fetchWordById(wordA).value(QStringLiteral("group_id")).toString(), groupA);
+
+    const QList<DLSyncEventEnvelope> fromDeviceAUpdate = {
+        groupPayloadEvent(groupA, QStringLiteral("Travel A updated"), QStringLiteral("#27AE60"),
+                          QStringLiteral("2026-01-15T09:02:00Z"), QStringLiteral("update"), deviceA),
+        wordPayloadEvent(wordA, QString(), QStringLiteral("train ticket A"),
+                         QStringLiteral("2026-01-15T09:03:00Z"), QStringLiteral("update"), deviceA),
+    };
+    QVERIFY2(reconciler.applyRemoteEventsAndAdvanceCursor(fromDeviceAUpdate, 4, &error), qPrintable(error));
+    QCOMPARE(DLDatabaseManager::instance().fetchGroupById(groupA).value(QStringLiteral("name")).toString(),
+             QStringLiteral("Travel A updated"));
+    QVERIFY(DLDatabaseManager::instance().fetchWordById(wordA).value(QStringLiteral("group_id")).toString().isEmpty());
+
+    const QList<DLSyncEventEnvelope> fromDeviceADelete = {
+        tombstoneEvent(QStringLiteral("word"), wordA, QStringLiteral("2026-01-15T09:04:00Z"), deviceA),
+        tombstoneEvent(QStringLiteral("group"), groupA, QStringLiteral("2026-01-15T09:05:00Z"), deviceA),
+    };
+    QVERIFY2(reconciler.applyRemoteEventsAndAdvanceCursor(fromDeviceADelete, 6, &error), qPrintable(error));
+    QVERIFY(DLDatabaseManager::instance().fetchWordById(wordA).isEmpty());
+    QVERIFY(DLDatabaseManager::instance().fetchGroupById(groupA).isEmpty());
+
+    const QList<DLSyncEventEnvelope> fromDeviceBCreate = {
+        groupPayloadEvent(groupB, QStringLiteral("Travel B"), QStringLiteral("#9B51E0"),
+                          QStringLiteral("2026-01-15T10:00:00Z"), QStringLiteral("create"), deviceB),
+        wordPayloadEvent(wordB, groupB, QStringLiteral("ticket B"),
+                         QStringLiteral("2026-01-15T10:01:00Z"), QStringLiteral("create"), deviceB),
+    };
+    QVERIFY2(reconciler.applyRemoteEventsAndAdvanceCursor(fromDeviceBCreate, 8, &error), qPrintable(error));
+    QCOMPARE(DLDatabaseManager::instance().fetchWordById(wordB).value(QStringLiteral("group_id")).toString(), groupB);
+
+    const QList<DLSyncEventEnvelope> fromDeviceBUpdate = {
+        groupPayloadEvent(groupB, QStringLiteral("Travel B updated"), QStringLiteral("#EB5757"),
+                          QStringLiteral("2026-01-15T10:02:00Z"), QStringLiteral("update"), deviceB),
+        wordPayloadEvent(wordB, QString(), QStringLiteral("train ticket B"),
+                         QStringLiteral("2026-01-15T10:03:00Z"), QStringLiteral("update"), deviceB),
+    };
+    QVERIFY2(reconciler.applyRemoteEventsAndAdvanceCursor(fromDeviceBUpdate, 10, &error), qPrintable(error));
+    QCOMPARE(DLDatabaseManager::instance().fetchGroupById(groupB).value(QStringLiteral("name")).toString(),
+             QStringLiteral("Travel B updated"));
+    QVERIFY(DLDatabaseManager::instance().fetchWordById(wordB).value(QStringLiteral("group_id")).toString().isEmpty());
+
+    const QList<DLSyncEventEnvelope> fromDeviceBDelete = {
+        tombstoneEvent(QStringLiteral("word"), wordB, QStringLiteral("2026-01-15T10:04:00Z"), deviceB),
+        tombstoneEvent(QStringLiteral("group"), groupB, QStringLiteral("2026-01-15T10:05:00Z"), deviceB),
+    };
+    QVERIFY2(reconciler.applyRemoteEventsAndAdvanceCursor(fromDeviceBDelete, 12, &error), qPrintable(error));
+    QVERIFY(DLDatabaseManager::instance().fetchWordById(wordB).isEmpty());
+    QVERIFY(DLDatabaseManager::instance().fetchGroupById(groupB).isEmpty());
+    QCOMPARE(DLDatabaseManager::instance().remoteCursor(), qint64(12));
+    QCOMPARE(DLDatabaseManager::instance().selectInt(QStringLiteral("SELECT COUNT(*) FROM sync_outbox_events;")), 0);
 }
 
 void TestRemoteChangeReconciler::remoteReviewStatsPayloadReconcilesWithoutOutboxFeedback()

@@ -40,7 +40,16 @@ list(REMOVE_ITEM AssetsFiles ${QmlFiles})
 list(APPEND AssetsFiles assets/icons/sort_words_icon.svg)
 list(REMOVE_DUPLICATES AssetsFiles)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Network Sql #[[Test]])
+find_package(Qt6 REQUIRED COMPONENTS Core Network Sql)
+
+set(DELEARNER_BUILD_TESTS_DEFAULT ON)
+if(IOS)
+    set(DELEARNER_BUILD_TESTS_DEFAULT OFF)
+endif()
+option(DELEARNER_BUILD_TESTS "Build the frontend test suite." ${DELEARNER_BUILD_TESTS_DEFAULT})
+if(DELEARNER_BUILD_TESTS)
+    find_package(Qt6 REQUIRED COMPONENTS Test)
+endif()
 
 option(DELEARNER_BUILD_APP "Build the Felgo application target." ON)
 if(DELEARNER_BUILD_APP AND NOT Felgo_FOUND)
@@ -180,8 +189,10 @@ if(DELEARNER_BUILD_APP)
     endif()
 endif()
 
-# enable_testing()
-# add_subdirectory(tests)
+if(DELEARNER_BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+endif()
 
 # uncomment this line to add Felgo Hot Reload and use hot reloading with your custom C++ code
 # for the remaining steps see here: https://felgo.com/custom-code-reload-app/
