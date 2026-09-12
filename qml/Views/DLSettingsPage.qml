@@ -2,7 +2,6 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Controls
-import QtQuick.Dialogs
 import QtQuick.Layouts
 import "../Components"
 
@@ -18,16 +17,11 @@ DLAppPage {
     property double databaseBytes: -1
     property string statusMessage: ""
     property bool statusIsError: false
-    property string pendingImportMode: ""
-    property string selectedImportPath: ""
-    property string exportErrorMessage: ""
 
     readonly property color green: "#35a969"
     readonly property color greenSoft: Qt.rgba(53 / 255, 169 / 255, 105 / 255, 0.12)
     readonly property color red: "#dc3545"
     readonly property color redSoft: Qt.rgba(220 / 255, 53 / 255, 69 / 255, 0.10)
-    readonly property color orange: "#e27a34"
-    readonly property color orangeSoft: Qt.rgba(226 / 255, 122 / 255, 52 / 255, 0.12)
     readonly property color fieldBg: "#f1f4f9"
 
     Component.onCompleted: reloadStats()
@@ -80,28 +74,6 @@ DLAppPage {
         return (bytes / (1024 * 1024)).toFixed(1) + " MB"
     }
 
-    function exportDatabase() {
-        if (appStateManager.exportVocabularyDatabase()) {
-            showStatus("Database export ready.", false)
-        } else {
-            exportErrorMessage = appStateManager.lastError || "Export failed."
-            exportErrorDialog.open()
-        }
-    }
-
-    function importDatabase(path, mode) {
-        var success = mode === "replace"
-                ? appStateManager.importDatabaseReplace(path)
-                : appStateManager.importDatabaseMerge(path)
-
-        if (success) {
-            reloadStats()
-            showStatus(mode === "replace" ? "Database replaced." : "Database merged.", false)
-        } else {
-            showStatus(appStateManager.lastError || "Import failed.", true)
-        }
-    }
-
     Timer {
         id: statusTimer
 
@@ -109,55 +81,6 @@ DLAppPage {
         repeat: false
 
         onTriggered: root.statusMessage = ""
-    }
-
-    FileDialog {
-        id: importDialog
-
-        title: root.pendingImportMode === "replace" ? "Import and replace" : "Import and merge"
-        fileMode: FileDialog.OpenFile
-        nameFilters: [ "DE Vocab export (*.devocab)", "SQLite database (*.sqlite *.db)", "All files (*)" ]
-
-        onAccepted: {
-            root.selectedImportPath = selectedFile.toString()
-            if (root.pendingImportMode === "replace") {
-                replaceImportDialog.open()
-            } else {
-                mergeImportDialog.open()
-            }
-        }
-    }
-
-    Dialog {
-        id: replaceImportDialog
-
-        title: "Replace database?"
-        modal: true
-        standardButtons: Dialog.Cancel | Dialog.Ok
-
-        Label {
-            width: Math.min(root.width - 72, 360)
-            text: "This will replace all current vocabulary and groups with the selected database."
-            wrapMode: Text.WordWrap
-        }
-
-        onAccepted: root.importDatabase(root.selectedImportPath, "replace")
-    }
-
-    Dialog {
-        id: mergeImportDialog
-
-        title: "Merge database?"
-        modal: true
-        standardButtons: Dialog.Cancel | Dialog.Ok
-
-        Label {
-            width: Math.min(root.width - 72, 360)
-            text: "Words and groups from the selected database will be added. Existing duplicate word pairs are skipped."
-            wrapMode: Text.WordWrap
-        }
-
-        onAccepted: root.importDatabase(root.selectedImportPath, "merge")
     }
 
     DLCustomPopup {
@@ -185,24 +108,6 @@ DLAppPage {
             }
             deleteAllDialog.close()
         }
-    }
-
-    DLCustomPopup {
-        id: exportErrorDialog
-
-        titleText: "Export failed"
-        messageText: root.exportErrorMessage
-        primaryText: "OK"
-        showSecondaryButton: false
-        cardBg: root.cardBg
-        fieldBg: root.fieldBg
-        textMain: root.textMain
-        textMuted: root.textMuted
-        line: root.line
-        primaryColor: root.blue
-        destructiveColor: root.red
-
-        onPrimaryClicked: exportErrorDialog.close()
     }
 
     Item {
@@ -307,44 +212,6 @@ DLAppPage {
                 } else {
                     root.showStatus(appStateManager.lastError || "Sync unavailable.", true)
                 }
-            }
-        }
-    }
-
-    SettingsSectionCard {
-        title: "Backup / Import / Export"
-
-        ActionRow {
-            label: "Export vocabulary database"
-            value: "Save a copy"
-            iconText: "EX"
-            buttonText: "Export"
-
-            onTriggered: root.exportDatabase()
-        }
-
-        ActionRow {
-            label: "Import and replace"
-            value: "Overwrite current data"
-            iconText: "IR"
-            buttonText: "Replace"
-            buttonColor: root.orange
-
-            onTriggered: {
-                root.pendingImportMode = "replace"
-                importDialog.open()
-            }
-        }
-
-        ActionRow {
-            label: "Import and merge"
-            value: "Add missing data"
-            iconText: "IM"
-            buttonText: "Merge"
-
-            onTriggered: {
-                root.pendingImportMode = "merge"
-                importDialog.open()
             }
         }
     }

@@ -47,6 +47,13 @@ target_link_libraries(TestAppStateAuthBootstrap
 
 add_test(NAME TestAppStateAuthBootstrap COMMAND TestAppStateAuthBootstrap)
 
+add_test(
+    NAME TestProductionSettingsUi
+    COMMAND "${CMAKE_COMMAND}"
+            -DSETTINGS_QML=${CMAKE_CURRENT_SOURCE_DIR}/../qml/Views/DLSettingsPage.qml
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/TestProductionSettingsUi.cmake
+)
+
 find_program(PYTHON3_EXECUTABLE python3)
 get_filename_component(DELEARNER_ROOT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
 if(TARGET TestSyncEventSerializer)
