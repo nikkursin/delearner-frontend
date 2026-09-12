@@ -8,12 +8,15 @@
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QTemporaryDir>
+#include <QUrl>
 
 #include <memory>
 
 #include "Auth/DLAuthSessionStore.h"
 #include "Managers/DLAppStateManager.h"
 #include "Managers/DLDatabaseManager.h"
+#include "Repositories/DLWordRepository.h"
+#include "Repositories/DLReviewStatsRepository.h"
 
 class TestAppStateAuthBootstrap : public QObject
 {
@@ -35,6 +38,9 @@ private slots:
     void manualDiagnosticSyncUsesExistingCoordinator();
     void offlineManualSyncDoesNotBypassNetworkRestoration();
     void repeatedManualDiagnosticTriggersCoalesceOneFollowUpSync();
+    void internalExportReplaceRestoresDatabaseState();
+    void internalExportMergeRetainsVocabularyRelationships();
+    void internalImportRejectsMissingAndSameDatabaseWithoutChanges();
 
 private:
     QByteArray m_previousApiBaseUrl;
@@ -594,6 +600,151 @@ void TestAppStateAuthBootstrap::repeatedManualDiagnosticTriggersCoalesceOneFollo
     writeEmptyPullResponse(followUpPullSocket.get());
 
     QVERIFY(!server.waitForNewConnection(100));
+}
+
+namespace {
+QMap<QString, QVariantList> internalDatabaseSnapshot()
+{
+    auto& database = DLDatabaseManager::instance();
+    QMap<QString, QVariantList> snapshot;
+    const auto tables = database.selectRows(QStringLiteral(
+        "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name;"));
+    for (const auto& table : tables) {
+        const QString name = table.toMap().value(QStringLiteral("name")).toString();
+        snapshot.insert(name, database.selectRows(
+            QStringLiteral("SELECT * FROM \"%1\" ORDER BY rowid;").arg(name)));
+    }
+    return snapshot;
+}
+}
+
+void TestAppStateAuthBootstrap::internalExportReplaceRestoresDatabaseState()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString databasePath = dir.filePath(QStringLiteral("working.sqlite"));
+    const QString exportPath = dir.filePath(QStringLiteral("diagnostics/backup.devocab"));
+    QVERIFY(createExistingLocalDatabase(databasePath));
+    DLAuthSessionStore store(databasePath + QStringLiteral(".auth.json"));
+    QVERIFY(store.saveSuccessfulSession(registeredSession()));
+
+    DLAppStateManager manager;
+    manager.setNetworkAvailable(false);
+    manager.init(databasePath);
+    auto& database = DLDatabaseManager::instance();
+    DLWordRepository words(database);
+    DLReviewStatsRepository reviews(database);
+    const QString groupId = manager.createGroup(QStringLiteral("Travel"));
+    QVERIFY(!groupId.isEmpty());
+    DLWord word;
+    word.germanWord = QStringLiteral("Haus");
+    word.nativeTranslation = QStringLiteral("house");
+    word.partOfSpeech = QStringLiteral("Nomen");
+    word.article = QStringLiteral("das");
+    word.nounForms.pluralForm = QStringLiteral("Häuser");
+    word.groupSyncId = groupId;
+    const QString wordId = words.insertWord(word);
+    QVERIFY2(!wordId.isEmpty(), qPrintable(database.lastError()));
+    QVERIFY(reviews.incrementCorrectAnswer(wordId));
+    const auto expected = internalDatabaseSnapshot();
+    QVERIFY(!expected.isEmpty());
+    QVERIFY(!expected.value(QStringLiteral("sync_outbox_events")).isEmpty());
+
+    // Explicit paths keep diagnostics out of OS share sheets and user folders.
+    QVERIFY2(manager.exportDatabase(QUrl::fromLocalFile(exportPath).toString()), qPrintable(manager.lastError()));
+    QVERIFY(QFile::exists(exportPath));
+    QCOMPARE(internalDatabaseSnapshot(), expected);
+    QVERIFY(words.deleteWord(wordId));
+    QVERIFY(internalDatabaseSnapshot() != expected);
+
+    QVERIFY2(manager.importDatabaseReplace(QUrl::fromLocalFile(exportPath).toString()), qPrintable(manager.lastError()));
+    QCOMPARE(internalDatabaseSnapshot(), expected);
+    QCOMPARE(words.fetchWordById(wordId).groupSyncId, groupId);
+    QCOMPARE(words.fetchWordById(wordId).nounForms.pluralForm, QStringLiteral("Häuser"));
+    QCOMPARE(reviews.fetchStats(wordId).correctAnswers, 1);
+    database.closeDatabase();
+    QVERIFY(database.openDatabase(databasePath));
+    QCOMPARE(internalDatabaseSnapshot(), expected);
+}
+
+void TestAppStateAuthBootstrap::internalExportMergeRetainsVocabularyRelationships()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString databasePath = dir.filePath(QStringLiteral("working.sqlite"));
+    const QString exportPath = dir.filePath(QStringLiteral("backup.devocab"));
+    QVERIFY(createExistingLocalDatabase(databasePath));
+    DLAuthSessionStore store(databasePath + QStringLiteral(".auth.json"));
+    QVERIFY(store.saveSuccessfulSession(registeredSession()));
+
+    DLAppStateManager manager;
+    manager.setNetworkAvailable(false);
+    manager.init(databasePath);
+    auto& database = DLDatabaseManager::instance();
+    DLWordRepository words(database);
+    DLReviewStatsRepository reviews(database);
+    const QString sourceGroupId = manager.createGroup(QStringLiteral("Travel"));
+    QVERIFY(!sourceGroupId.isEmpty());
+    DLWord word;
+    word.germanWord = QStringLiteral("Haus");
+    word.nativeTranslation = QStringLiteral("house");
+    word.partOfSpeech = QStringLiteral("Nomen");
+    word.nounForms.pluralForm = QStringLiteral("Häuser");
+    word.groupSyncId = sourceGroupId;
+    const QString sourceWordId = words.insertWord(word);
+    QVERIFY(!sourceWordId.isEmpty());
+    QVERIFY(reviews.incrementWrongAnswer(sourceWordId));
+    QVERIFY2(manager.exportDatabase(exportPath), qPrintable(manager.lastError()));
+    QVERIFY(database.deleteAllData());
+    const QString localGroupId = manager.createGroup(QStringLiteral("Local only"));
+    QVERIFY(!localGroupId.isEmpty());
+
+    QVERIFY2(manager.importDatabaseMerge(QUrl::fromLocalFile(exportPath).toString()), qPrintable(manager.lastError()));
+    const auto importedWords = words.fetchAllWords();
+    QCOMPARE(importedWords.size(), 1);
+    const auto imported = importedWords.first();
+    QCOMPARE(imported.germanWord, word.germanWord);
+    QCOMPARE(imported.nativeTranslation, word.nativeTranslation);
+    QCOMPARE(imported.nounForms.pluralForm, word.nounForms.pluralForm);
+    QVERIFY(!imported.syncId.isEmpty());
+    QVERIFY(imported.syncId != sourceWordId);
+    QVERIFY(!imported.groupSyncId.isEmpty());
+    QVERIFY(imported.groupSyncId != sourceGroupId);
+    QCOMPARE(reviews.fetchStats(imported.syncId).wrongAnswers, 1);
+    QCOMPARE(database.selectInt(QStringLiteral("SELECT COUNT(*) FROM groups;")), 2);
+    QCOMPARE(database.selectOneRow(QStringLiteral("SELECT name FROM groups WHERE sync_id = :id;"),
+        {{QStringLiteral(":id"), imported.groupSyncId}}).value(QStringLiteral("name")).toString(), QStringLiteral("Travel"));
+    QCOMPARE(database.selectOneRow(QStringLiteral("SELECT name FROM groups WHERE sync_id = :id;"),
+        {{QStringLiteral(":id"), localGroupId}}).value(QStringLiteral("name")).toString(), QStringLiteral("Local only"));
+    QVERIFY(database.selectRows(QStringLiteral("PRAGMA foreign_key_check;")).isEmpty());
+}
+
+void TestAppStateAuthBootstrap::internalImportRejectsMissingAndSameDatabaseWithoutChanges()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString databasePath = dir.filePath(QStringLiteral("working.sqlite"));
+    QVERIFY(createExistingLocalDatabase(databasePath));
+    DLAuthSessionStore store(databasePath + QStringLiteral(".auth.json"));
+    QVERIFY(store.saveSuccessfulSession(registeredSession()));
+
+    DLAppStateManager manager;
+    manager.setNetworkAvailable(false);
+    manager.init(databasePath);
+    QVERIFY(!manager.createGroup(QStringLiteral("Keep me")).isEmpty());
+    const auto expected = internalDatabaseSnapshot();
+    const QStringList rejectedPaths = {QString(), dir.filePath(QStringLiteral("missing.devocab")), databasePath};
+    for (const auto& path : rejectedPaths) {
+        QVERIFY(!manager.importDatabaseReplace(path));
+        QVERIFY(!manager.lastError().isEmpty());
+        QCOMPARE(internalDatabaseSnapshot(), expected);
+        QVERIFY(!manager.importDatabaseMerge(path));
+        QVERIFY(!manager.lastError().isEmpty());
+        QCOMPARE(internalDatabaseSnapshot(), expected);
+    }
+    QVERIFY(!manager.exportDatabase(QString()));
+    QVERIFY(!manager.lastError().isEmpty());
+    QCOMPARE(internalDatabaseSnapshot(), expected);
 }
 
 QTEST_MAIN(TestAppStateAuthBootstrap)
