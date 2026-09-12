@@ -147,8 +147,8 @@ void TestDatabaseManager::openDatabaseRecordsSqliteSchemaVersion()
     const QVariantMap row = DLDatabaseManager::instance().selectOneRow(
         QStringLiteral("SELECT major, minor FROM schema_version WHERE component = 'sqlite';"));
     QCOMPARE(row.value(QStringLiteral("major")).toInt(), 1);
-    QCOMPARE(row.value(QStringLiteral("minor")).toInt(), 2);
-    QCOMPARE(DLDatabaseManager::instance().selectInt(QStringLiteral("PRAGMA user_version;")), 1002);
+    QCOMPARE(row.value(QStringLiteral("minor")).toInt(), 3);
+    QCOMPARE(DLDatabaseManager::instance().selectInt(QStringLiteral("PRAGMA user_version;")), 1003);
 }
 
 void TestDatabaseManager::cleanDatabaseCreatesUuidIdentityColumns()
@@ -412,7 +412,7 @@ void TestDatabaseManager::openDatabaseMigratesLegacySchema()
     QVERIFY(tableExists(QStringLiteral("sync_outbox_events")));
     QVERIFY(tableExists(QStringLiteral("sync_acknowledged_event_diagnostics")));
     QVERIFY(tableExists(QStringLiteral("sync_pull_cursor")));
-    QCOMPARE(DLDatabaseManager::instance().selectInt(QStringLiteral("PRAGMA user_version;")), 1002);
+    QCOMPARE(DLDatabaseManager::instance().selectInt(QStringLiteral("PRAGMA user_version;")), 1003);
 }
 
 void TestDatabaseManager::deleteAllDataRemovesStoredData()

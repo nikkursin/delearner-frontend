@@ -1,5 +1,6 @@
 set(DELEARNER_TESTS
     TestDatabaseManager
+    TestAppSettingRepository
     TestGroupRepository
     TestWordRepository
     TestReviewStatsRepository

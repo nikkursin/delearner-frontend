@@ -1,6 +1,8 @@
 #include "DLDatabaseManager.h"
 
 #include <QDateTime>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QMutexLocker>
 #include <QSet>
 #include <QSqlError>
@@ -16,10 +18,11 @@
 #include "DLReviewStatsRepository.h"
 #include "DLWordRepository.h"
 #include "../Models/DLModelMappers.h"
+#include "../Sync/DLRemoteChangeReconciler.h"
 
 namespace {
 constexpr int kSqliteSchemaMajor = 1;
-constexpr int kSqliteSchemaMinor = 2;
+constexpr int kSqliteSchemaMinor = 3;
 constexpr int kSqliteUserVersion = kSqliteSchemaMajor * 1000 + kSqliteSchemaMinor;
 
 QStringList argumentKeys(const QVariantMap& args)
@@ -385,6 +388,17 @@ bool DLDatabaseManager::createTablesIfNeeded()
             );
         )"), {} },
         { QStringLiteral(R"(
+            CREATE TABLE IF NOT EXISTS account_learning_settings (
+                sync_id TEXT PRIMARY KEY,
+                setting_key TEXT NOT NULL UNIQUE CHECK(setting_key LIKE 'learning.%'),
+                setting_value TEXT,
+                value_type TEXT NOT NULL CHECK(value_type IN ('string', 'integer', 'boolean', 'json')),
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                deleted_at INTEGER
+            );
+        )"), {} },
+        { QStringLiteral(R"(
             CREATE TABLE IF NOT EXISTS noun_forms (
                 word_id INTEGER PRIMARY KEY,
                 plural_form TEXT,
@@ -508,6 +522,17 @@ bool DLDatabaseManager::migrateSchemaIfNeeded()
                     id INTEGER PRIMARY KEY CHECK(id = 1),
                     consumed_sequence INTEGER NOT NULL DEFAULT 0 CHECK(consumed_sequence >= 0),
                     updated_at INTEGER NOT NULL
+                );
+            )"), error)
+            || !execMigrationSql(db, QStringLiteral(R"(
+                CREATE TABLE IF NOT EXISTS account_learning_settings (
+                    sync_id TEXT PRIMARY KEY,
+                    setting_key TEXT NOT NULL UNIQUE CHECK(setting_key LIKE 'learning.%'),
+                    setting_value TEXT,
+                    value_type TEXT NOT NULL CHECK(value_type IN ('string', 'integer', 'boolean', 'json')),
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    deleted_at INTEGER
                 );
             )"), error)) {
             return false;
@@ -691,6 +716,8 @@ bool DLDatabaseManager::createIndexesIfNeeded()
         )"), {} },
         { QStringLiteral("CREATE UNIQUE INDEX IF NOT EXISTS idx_word_review_stats_word_sync_id ON word_review_stats(word_sync_id);"), {} },
         { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_word_review_stats_due_at ON word_review_stats(due_at);"), {} },
+        { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_account_learning_settings_updated_at ON account_learning_settings(updated_at);"), {} },
+        { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_account_learning_settings_deleted_at ON account_learning_settings(deleted_at);"), {} },
         { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_sync_outbox_events_created_at ON sync_outbox_events(created_at);"), {} },
         { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_sync_outbox_events_next_attempt_after ON sync_outbox_events(next_attempt_after);"), {} },
         { QStringLiteral("CREATE INDEX IF NOT EXISTS idx_sync_outbox_events_entity ON sync_outbox_events(entity_type, entity_id);"), {} },
@@ -1032,6 +1059,33 @@ bool DLDatabaseManager::acknowledgeSyncOutboxEvent(const QString& eventId,
     const QString trimmedEventId = eventId.trimmed();
 
     return transaction([&](QSqlDatabase& db, QString* error) {
+        DLSyncEventEnvelope settingCanonical;
+        QSqlQuery original(db);
+        original.prepare(QStringLiteral("SELECT entity_type, envelope_json FROM sync_outbox_events WHERE event_id = ?"));
+        original.addBindValue(trimmedEventId);
+        if (!original.exec()) {
+            *error = original.lastError().text();
+            return false;
+        }
+        if (original.next() && original.value(0).toString() == QStringLiteral("app_setting")) {
+            QString parseError;
+            settingCanonical = DLSyncEventSerializer::parseContractJson(original.value(1).toString().toUtf8(),
+                DLSyncEventSerializer::contractVersion(), &parseError);
+            const QJsonObject canonical = QJsonDocument::fromJson(canonicalResultJson.toUtf8()).object();
+            const auto originalBody = settingCanonical.operation == QStringLiteral("delete") ? settingCanonical.tombstone : settingCanonical.payload;
+            settingCanonical.entityId = canonical.value(QStringLiteral("entityId")).toString();
+            settingCanonical.operation = canonical.value(QStringLiteral("operation")).toString();
+            settingCanonical.payload = canonical.value(QStringLiteral("state")).toObject().toVariantMap();
+            settingCanonical.tombstone = canonical.value(QStringLiteral("tombstone")).toObject().toVariantMap();
+            const auto body = settingCanonical.operation == QStringLiteral("delete") ? settingCanonical.tombstone : settingCanonical.payload;
+            settingCanonical.updatedAt = body.value(settingCanonical.operation == QStringLiteral("delete") ? QStringLiteral("updatedAt") : QStringLiteral("updated_at"));
+            if (!parseError.isEmpty() || canonical.value(QStringLiteral("entityType")).toString() != QStringLiteral("app_setting")
+                || body.value(QStringLiteral("setting_key")) != originalBody.value(QStringLiteral("setting_key"))
+                || body.value(QStringLiteral("ownerUserId")).toString() != settingCanonical.authenticatedUserId) {
+                *error = QStringLiteral("Invalid learning-setting canonical acknowledgement.");
+                return false;
+            }
+        }
         QSqlQuery insert(db);
         insert.prepare(QStringLiteral(R"(
             INSERT INTO sync_acknowledged_event_diagnostics
@@ -1085,6 +1139,30 @@ bool DLDatabaseManager::acknowledgeSyncOutboxEvent(const QString& eventId,
             return false;
         }
 
+        if (!settingCanonical.entityType.isEmpty()) {
+            DLRemoteChangeReconciler reconciler(*this);
+            if (!reconciler.applyRemoteEventInTransaction(db, settingCanonical, error)) {
+                return false;
+            }
+            QList<DLSyncEventEnvelope> pending;
+            if (!reconciler.loadPendingOutboxEvents(db, &pending, error)) {
+                return false;
+            }
+            const auto canonicalBody = settingCanonical.operation == QStringLiteral("delete") ? settingCanonical.tombstone : settingCanonical.payload;
+            for (DLSyncEventEnvelope event : pending) {
+                QVariantMap& body = event.operation == QStringLiteral("delete") ? event.tombstone : event.payload;
+                if (event.entityType != QStringLiteral("app_setting")
+                    || body.value(QStringLiteral("setting_key")) != canonicalBody.value(QStringLiteral("setting_key"))) {
+                    continue;
+                }
+                // Preserve submitted envelopes for idempotent retries; only reconcile the local projection.
+                event.entityId = settingCanonical.entityId;
+                body.insert(event.operation == QStringLiteral("delete") ? QStringLiteral("entity_id") : QStringLiteral("id"), event.entityId);
+                if (!reconciler.applyRemoteEventInTransaction(db, event, error)) {
+                    return false;
+                }
+            }
+        }
         return true;
     });
 }

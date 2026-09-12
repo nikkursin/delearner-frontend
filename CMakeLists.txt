@@ -70,6 +70,8 @@ set(DELEARNER_CORE_SOURCES
     src/Managers/DLDatabaseManager.h
     src/Repositories/DLGroupRepository.cpp
     src/Repositories/DLGroupRepository.h
+    src/Repositories/DLAppSettingRepository.cpp
+    src/Repositories/DLAppSettingRepository.h
     src/Repositories/DLQuizRepository.cpp
     src/Repositories/DLQuizRepository.h
     src/Repositories/DLReviewStatsRepository.cpp

@@ -187,6 +187,7 @@ bool DLDatabaseMaintenanceService::deleteAllData()
         { QStringLiteral("DELETE FROM sync_pull_cursor;"), {} },
         { QStringLiteral("DELETE FROM sync_acknowledged_event_diagnostics;"), {} },
         { QStringLiteral("DELETE FROM sync_outbox_events;"), {} },
+        { QStringLiteral("DELETE FROM account_learning_settings;"), {} },
         { QStringLiteral("DELETE FROM adjective_forms;"), {} },
         { QStringLiteral("DELETE FROM verb_forms;"), {} },
         { QStringLiteral("DELETE FROM noun_forms;"), {} },

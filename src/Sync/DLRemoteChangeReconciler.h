@@ -27,6 +27,7 @@ public:
                                                            QString* error = nullptr);
 
 private:
+    friend class DLDatabaseManager;
     bool applyRemoteEventInTransaction(QSqlDatabase& db, const DLSyncEventEnvelope& event, QString* error);
     bool recordRemoteCursor(QSqlDatabase& db, qint64 consumedSequence, QString* error);
     bool loadPendingOutboxEvents(QSqlDatabase& db, QList<DLSyncEventEnvelope>* events, QString* error);
@@ -35,6 +36,7 @@ private:
     bool applyPayloadEvent(QSqlDatabase& db, const DLSyncEventEnvelope& event, QString* error);
     bool applyTombstoneEvent(QSqlDatabase& db, const DLSyncEventEnvelope& event, QString* error);
 
+    bool upsertLearningSetting(QSqlDatabase& db, const DLSyncEventEnvelope& event, QString* error);
     bool upsertGroup(QSqlDatabase& db, const DLSyncEventEnvelope& event, QString* error);
     bool upsertWord(QSqlDatabase& db, const DLSyncEventEnvelope& event, QString* error);
     bool upsertReviewStats(QSqlDatabase& db, const DLSyncEventEnvelope& event, QString* error);

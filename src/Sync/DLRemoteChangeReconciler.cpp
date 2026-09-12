@@ -434,7 +434,20 @@ bool DLRemoteChangeReconciler::replaceLocalStateWithRemoteEventsAndAdvanceCursor
             }
         }
 
-        for (const DLSyncEventEnvelope& event : pendingOutboxEvents) {
+        for (DLSyncEventEnvelope event : pendingOutboxEvents) {
+            if (event.entityType == QStringLiteral("app_setting")) {
+                QVariantMap& body = event.operation == QStringLiteral("delete") ? event.tombstone : event.payload;
+                QSqlQuery identity(db);
+                identity.prepare(QStringLiteral("SELECT sync_id FROM account_learning_settings WHERE setting_key = ?"));
+                identity.addBindValue(body.value(QStringLiteral("setting_key")));
+                if (!execQuery(identity, transactionError)) {
+                    return false;
+                }
+                if (identity.next()) {
+                    event.entityId = identity.value(0).toString();
+                    body.insert(event.operation == QStringLiteral("delete") ? QStringLiteral("entity_id") : QStringLiteral("id"), event.entityId);
+                }
+            }
             if (!applyRemoteEventInTransaction(db, event, transactionError)) {
                 return false;
             }
@@ -520,6 +533,7 @@ bool DLRemoteChangeReconciler::clearLocalSyncableState(QSqlDatabase& db, QString
         QStringLiteral("DELETE FROM word_review_stats;"),
         QStringLiteral("DELETE FROM words;"),
         QStringLiteral("DELETE FROM groups;"),
+        QStringLiteral("DELETE FROM account_learning_settings;"),
         QStringLiteral("DELETE FROM sync_acknowledged_event_diagnostics;"),
         QStringLiteral("DELETE FROM sync_pull_cursor;")
     };
@@ -537,6 +551,10 @@ bool DLRemoteChangeReconciler::clearLocalSyncableState(QSqlDatabase& db, QString
 
 bool DLRemoteChangeReconciler::applyPayloadEvent(QSqlDatabase& db, const DLSyncEventEnvelope& event, QString* error)
 {
+    if (event.entityType == QStringLiteral("app_setting")) {
+        return upsertLearningSetting(db, event, error);
+    }
+
     if (event.entityType == QStringLiteral("group")) {
         return upsertGroup(db, event, error);
     }
@@ -553,6 +571,10 @@ bool DLRemoteChangeReconciler::applyPayloadEvent(QSqlDatabase& db, const DLSyncE
 
 bool DLRemoteChangeReconciler::applyTombstoneEvent(QSqlDatabase& db, const DLSyncEventEnvelope& event, QString* error)
 {
+    if (event.entityType == QStringLiteral("app_setting")) {
+        return upsertLearningSetting(db, event, error);
+    }
+
     if (!tombstoneIdentityMatchesEvent(event, error)) {
         return false;
     }
@@ -844,5 +866,48 @@ bool DLRemoteChangeReconciler::deleteReviewStats(QSqlDatabase& db, const DLSyncE
     QSqlQuery query(db);
     query.prepare(QStringLiteral("DELETE FROM word_review_stats WHERE word_sync_id = :word_sync_id;"));
     query.bindValue(QStringLiteral(":word_sync_id"), event.entityId.trimmed());
+    return execQuery(query, error);
+}
+
+bool DLRemoteChangeReconciler::upsertLearningSetting(QSqlDatabase& db, const DLSyncEventEnvelope& event, QString* error)
+{
+    const bool deleted = event.operation == QStringLiteral("delete");
+    if (deleted ? !tombstoneIdentityMatchesEvent(event, error)
+                : !payloadIdentityMatchesEvent(event, QStringLiteral("id"), error)) {
+        return false;
+    }
+    const QVariantMap body = deleted ? event.tombstone : event.payload;
+    const QString key = body.value(QStringLiteral("setting_key")).toString();
+    if (!key.startsWith(QStringLiteral("learning."))
+        || (!deleted && body.value(QStringLiteral("scope")).toString() != QStringLiteral("account_learning"))) {
+        setError(error, QStringLiteral("Only account learning settings may synchronize."));
+        return false;
+    }
+    qint64 updatedAt = 0;
+    qint64 createdAt = 0;
+    qint64 deletedAt = 0;
+    if (!timestampSeconds(body.value(deleted ? QStringLiteral("updatedAt") : QStringLiteral("updated_at")),
+                          QStringLiteral("updatedAt"), &updatedAt, error)
+        || (!deleted && !timestampSeconds(body.value(QStringLiteral("created_at")), QStringLiteral("created_at"), &createdAt, error))
+        || (deleted && !timestampSeconds(body.value(QStringLiteral("deletedAt")), QStringLiteral("deletedAt"), &deletedAt, error))) {
+        return false;
+    }
+    QSqlQuery query(db);
+    query.prepare(QStringLiteral(R"(
+        INSERT INTO account_learning_settings
+            (sync_id, setting_key, setting_value, value_type, created_at, updated_at, deleted_at)
+        VALUES (:id, :key, :value, :type, :created, :updated, :deleted)
+        ON CONFLICT(setting_key) DO UPDATE SET
+            sync_id = excluded.sync_id, setting_value = excluded.setting_value,
+            value_type = excluded.value_type, created_at = excluded.created_at,
+            updated_at = excluded.updated_at, deleted_at = excluded.deleted_at;
+    )"));
+    query.bindValue(QStringLiteral(":id"), event.entityId);
+    query.bindValue(QStringLiteral(":key"), key);
+    query.bindValue(QStringLiteral(":value"), deleted ? QVariant() : body.value(QStringLiteral("setting_value")));
+    query.bindValue(QStringLiteral(":type"), deleted ? QStringLiteral("string") : body.value(QStringLiteral("value_type")).toString());
+    query.bindValue(QStringLiteral(":created"), deleted ? updatedAt : createdAt);
+    query.bindValue(QStringLiteral(":updated"), updatedAt);
+    query.bindValue(QStringLiteral(":deleted"), deleted ? QVariant(deletedAt) : QVariant());
     return execQuery(query, error);
 }

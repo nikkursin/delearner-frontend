@@ -128,11 +128,6 @@ bool appendTombstoneEvents(const QVariantList& items, QList<DLSyncEventEnvelope>
             return false;
         }
 
-        const QString entityType = tombstone.value(QStringLiteral("entity_type")).toString().trimmed();
-        if (entityType == QStringLiteral("app_setting")) {
-            continue;
-        }
-
         DLSyncEventEnvelope event = tombstoneEvent(tombstone);
         QString validationError;
         if (!DLSyncEventSerializer::validateEvent(event, &validationError)) {
@@ -186,12 +181,12 @@ bool DLBootstrapStateRestorer::restoreFromResponse(const QVariantMap& response, 
     QVariantList words;
     QVariantList reviewStats;
     QVariantList tombstones;
-    QVariantList ignoredLearningSettings;
+    QVariantList learningSettings;
     if (!stateList(state, QStringLiteral("groups"), &groups, error)
         || !stateList(state, QStringLiteral("words"), &words, error)
         || !stateList(state, QStringLiteral("reviewStats"), &reviewStats, error)
         || !stateList(state, QStringLiteral("tombstones"), &tombstones, error)
-        || !stateList(state, QStringLiteral("learningSettings"), &ignoredLearningSettings, error)) {
+        || !stateList(state, QStringLiteral("learningSettings"), &learningSettings, error)) {
         return false;
     }
 
@@ -199,6 +194,7 @@ bool DLBootstrapStateRestorer::restoreFromResponse(const QVariantMap& response, 
     if (!appendPayloadEvents(groups, QStringLiteral("group"), QStringLiteral("id"), &events, error)
         || !appendPayloadEvents(words, QStringLiteral("word"), QStringLiteral("id"), &events, error)
         || !appendPayloadEvents(reviewStats, QStringLiteral("word_review_stats"), QStringLiteral("word_id"), &events, error)
+        || !appendPayloadEvents(learningSettings, QStringLiteral("app_setting"), QStringLiteral("id"), &events, error)
         || !appendTombstoneEvents(tombstones, &events, error)) {
         return false;
     }
