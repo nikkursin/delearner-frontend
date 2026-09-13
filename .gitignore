@@ -1,3 +1,5 @@
 build/*
+build-ios/*
+build-android/*
 build-tests/*
 android/*

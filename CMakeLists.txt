@@ -144,6 +144,25 @@ if(DELEARNER_BUILD_APP)
 
     felgo_configure_executable(delearner)
 
+    if(ANDROID)
+        # Felgo writes its Gradle properties into the deployment output only.
+        # Preserve them in the package source too, so recreating that output
+        # cannot replace the product/toolchain settings with Qt's defaults.
+        set(delearner_android_package_dir "${CMAKE_CURRENT_BINARY_DIR}/android-package-delearner")
+        file(GLOB_RECURSE delearner_android_files CONFIGURE_DEPENDS
+            RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}/android" "android/*")
+        foreach(android_file IN LISTS delearner_android_files)
+            configure_file("android/${android_file}"
+                "${delearner_android_package_dir}/${android_file}" COPYONLY)
+        endforeach()
+        # Do not track the deployment output as a CMake input: androiddeployqt
+        # modifies it again when merging SDK properties.
+        file(READ "${felgo_android_out_build_dir}/gradle.properties" delearner_gradle_properties)
+        file(WRITE "${delearner_android_package_dir}/gradle.properties" "${delearner_gradle_properties}")
+        set_property(TARGET delearner PROPERTY QT_ANDROID_PACKAGE_SOURCE_DIR
+            "${delearner_android_package_dir}")
+    endif()
+
 # Deploy resources to build folder/package directly
 # comment for publishing
     deploy_resources("${QmlFiles};${AssetsFiles}")
